@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>AltyaziDB Arr Bridge Options</title>
+    <link rel="stylesheet" href="styles/options.css">
+  </head>
+  <body>
+    <main class="options-shell">
+      <header class="options-header">
+        <img src="assets/icon-48.png" alt="" class="options-app-icon">
+        <div>
+          <h1>AltyaziDB Arr Bridge</h1>
+          <p>Configure local Radarr and Sonarr lookup behavior.</p>
+        </div>
+      </header>
+
+      <form id="optionsForm">
+        <section class="panel">
+          <div class="panel-title">
+            <img src="assets/radarr-reference.png" alt="" class="panel-logo panel-logo-radarr">
+            <h2>Radarr</h2>
+          </div>
+
+          <label>
+            <span>Base URL</span>
+            <input id="radarrBaseUrl" name="radarrBaseUrl" type="url" spellcheck="false">
+          </label>
+
+          <label>
+            <span>API key</span>
+            <input id="radarrApiKey" name="radarrApiKey" type="password" spellcheck="false" autocomplete="off">
+          </label>
+
+          <div class="button-row">
+            <button type="button" id="testRadarr">Test Radarr</button>
+            <button type="button" id="loadRadarrChoices">Load Radarr folders/profiles</button>
+          </div>
+
+          <div class="auto-fields" data-auto-section>
+            <label>
+              <span>Root folder path</span>
+              <input id="radarrRootFolderPath" name="radarrRootFolderPath" list="radarrRootFolders" spellcheck="false">
+              <datalist id="radarrRootFolders"></datalist>
+            </label>
+
+            <label>
+              <span>Quality profile</span>
+              <select id="radarrQualityProfileId" name="radarrQualityProfileId">
+                <option value="">Choose a profile after loading choices</option>
+              </select>
+            </label>
+
+            <label>
+              <span>Minimum availability</span>
+              <select id="radarrMinimumAvailability" name="radarrMinimumAvailability">
+                <option value="released">Released</option>
+                <option value="inCinemas">In cinemas</option>
+                <option value="announced">Announced</option>
+              </select>
+            </label>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-title">
+            <img src="assets/sonarr-reference.png" alt="" class="panel-logo panel-logo-sonarr">
+            <h2>Sonarr</h2>
+          </div>
+
+          <label>
+            <span>Base URL</span>
+            <input id="sonarrBaseUrl" name="sonarrBaseUrl" type="url" spellcheck="false">
+          </label>
+
+          <label>
+            <span>API key</span>
+            <input id="sonarrApiKey" name="sonarrApiKey" type="password" spellcheck="false" autocomplete="off">
+          </label>
+
+          <div class="button-row">
+            <button type="button" id="testSonarr">Test Sonarr</button>
+            <button type="button" id="loadSonarrChoices">Load Sonarr folders/profiles</button>
+          </div>
+
+          <div class="auto-fields" data-auto-section>
+            <label>
+              <span>Root folder path</span>
+              <input id="sonarrRootFolderPath" name="sonarrRootFolderPath" list="sonarrRootFolders" spellcheck="false">
+              <datalist id="sonarrRootFolders"></datalist>
+            </label>
+
+            <label>
+              <span>Quality profile</span>
+              <select id="sonarrQualityProfileId" name="sonarrQualityProfileId">
+                <option value="">Choose a profile after loading choices</option>
+              </select>
+            </label>
+
+            <label>
+              <span>Series type</span>
+              <select id="sonarrSeriesType" name="sonarrSeriesType">
+                <option value="standard">Standard</option>
+                <option value="anime">Anime</option>
+                <option value="daily">Daily</option>
+              </select>
+            </label>
+
+            <label class="checkbox-label">
+              <input id="sonarrSeasonFolder" name="sonarrSeasonFolder" type="checkbox">
+              <span>Use season folders</span>
+            </label>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-title">
+            <img src="assets/prowlarr-reference.png" alt="" class="panel-logo panel-logo-prowlarr">
+            <h2>Prowlarr</h2>
+          </div>
+
+          <label>
+            <span>Base URL</span>
+            <input id="prowlarrBaseUrl" name="prowlarrBaseUrl" type="url" spellcheck="false">
+          </label>
+
+          <label>
+            <span>API key</span>
+            <input id="prowlarrApiKey" name="prowlarrApiKey" type="password" spellcheck="false" autocomplete="off">
+          </label>
+
+          <label>
+            <span>Search result limit</span>
+            <input id="prowlarrLimit" name="prowlarrLimit" type="number" min="1" max="100" step="1">
+          </label>
+
+          <label class="checkbox-label">
+            <input id="showProwlarrButton" name="showProwlarrButton" type="checkbox">
+            <span>Show Prowlarr search button on AltyaziDB pages</span>
+          </label>
+
+          <div class="button-row">
+            <button type="button" id="testProwlarr">Test Prowlarr</button>
+          </div>
+        </section>
+
+        <section class="panel panel-wide">
+          <h2>Behavior</h2>
+
+          <div class="radio-grid">
+            <label class="radio-card">
+              <input type="radio" name="behavior" value="openSearchPage">
+              <span>Open search page</span>
+              <small>Use API lookup when possible, then open the matching Arr page.</small>
+            </label>
+
+            <label class="radio-card">
+              <input type="radio" name="behavior" value="showPopupResults">
+              <span>Show popup results</span>
+              <small>Keep you on AltyaziDB and show the best local lookup matches.</small>
+            </label>
+
+            <label class="radio-card">
+              <input type="radio" name="behavior" value="autoAdd">
+              <span>Auto-add</span>
+              <small>Add to Radarr/Sonarr only after root folder and profile are configured.</small>
+            </label>
+          </div>
+        </section>
+
+        <div class="footer-bar">
+          <div id="status" role="status" aria-live="polite"></div>
+          <button type="submit" class="primary-button">Save settings</button>
+        </div>
+      </form>
+    </main>
+
+    <script src="src/config.js"></script>
+    <script src="src/options.js"></script>
+  </body>
+</html>

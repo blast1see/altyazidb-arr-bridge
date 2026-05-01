@@ -1,0 +1,455 @@
+(() => {
+  const DEFAULT_SETTINGS = {
+    radarrBaseUrl: "http://localhost:7878",
+    radarrApiKey: "",
+    sonarrBaseUrl: "http://localhost:8989",
+    sonarrApiKey: "",
+    prowlarrBaseUrl: "http://localhost:9696",
+    prowlarrApiKey: "",
+    showProwlarrButton: true,
+    prowlarrLimit: 25,
+    behavior: "openSearchPage",
+    radarrRootFolderPath: "",
+    radarrQualityProfileId: "",
+    radarrMinimumAvailability: "released",
+    sonarrRootFolderPath: "",
+    sonarrQualityProfileId: "",
+    sonarrSeriesType: "standard",
+    sonarrSeasonFolder: true
+  };
+
+  const SERVICE_LABELS = {
+    radarr: "Radarr",
+    sonarr: "Sonarr",
+    prowlarr: "Prowlarr"
+  };
+
+  function stripArrSuffix(title) {
+    return String(title || "")
+      .replace(/\s+(?:\u00bb|\||-)\s+AltyaziDb.*$/i, "")
+      .replace(/\s+\|\s+AltyaziDb.*$/i, "")
+      .trim();
+  }
+
+  function normalizeSpace(value) {
+    return String(value || "")
+      .replace(/\u00a0/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function normalizeBaseUrl(value, fallback) {
+    const raw = normalizeSpace(value || fallback || "").replace(/\/+$/, "");
+
+    if (!raw) {
+      return "";
+    }
+
+    try {
+      const withProtocol = /^https?:\/\//i.test(raw) ? raw : `http://${raw}`;
+      const parsed = new URL(withProtocol);
+      parsed.hash = "";
+      parsed.search = "";
+      return parsed.toString().replace(/\/+$/, "");
+    } catch (_error) {
+      return normalizeSpace(fallback || "");
+    }
+  }
+
+  function clampInt(value, min, max, fallback) {
+    const parsed = Number.parseInt(value, 10);
+
+    if (!Number.isFinite(parsed)) {
+      return fallback;
+    }
+
+    return Math.min(max, Math.max(min, parsed));
+  }
+
+  function escapeRegExp(value) {
+    return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  function comparableTitle(value) {
+    return normalizeSpace(value)
+      .toLowerCase()
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^\p{L}\p{N}]+/gu, " ");
+  }
+
+  function cleanReleaseSearchTitle(value, year) {
+    const raw = normalizeSpace(value);
+
+    if (!raw) {
+      return "";
+    }
+
+    const yearPattern = year ? escapeRegExp(year) : "(?:19|20)\\d{2}";
+    const patterns = [
+      new RegExp(`^(.{2,120}?)[._\\s-]+${yearPattern}\\b`, "i"),
+      /^(.{2,120}?)[._\s-]+S\d{1,2}E\d{1,3}\b/i,
+      /^(.{2,120}?)[._\s-]+S\d{1,2}\b/i
+    ];
+    const match = patterns.map((pattern) => raw.match(pattern)).find(Boolean);
+
+    if (!match) {
+      return "";
+    }
+
+    const title = normalizeSpace(
+      match[1]
+        .replace(/\[[^\]]*]/g, " ")
+        .replace(/\([^)]*\)/g, " ")
+        .replace(/[._-]+/g, " ")
+        .replace(/\b(?:www|com|net|org)\b/gi, " ")
+    );
+
+    if (!/[A-Za-z]/.test(title)) {
+      return "";
+    }
+
+    if (/^(?:web|webrip|webdl|web-dl|bluray|bdrip|brrip|hdtv|hdrip|dvd|x264|x265|h264|h265)$/i.test(title)) {
+      return "";
+    }
+
+    return title.slice(0, 80).trim();
+  }
+
+  function uniqueSearchTitles(values) {
+    const seen = new Set();
+    const titles = [];
+
+    for (const value of values || []) {
+      const title = normalizeSpace(value);
+
+      if (!title) {
+        continue;
+      }
+
+      const key = comparableTitle(title) || title.toLowerCase();
+
+      if (seen.has(key)) {
+        continue;
+      }
+
+      seen.add(key);
+      titles.push(title);
+    }
+
+    return titles;
+  }
+
+  function mergeSettings(settings) {
+    const merged = {
+      ...DEFAULT_SETTINGS,
+      ...(settings || {})
+    };
+
+    merged.radarrBaseUrl = normalizeBaseUrl(
+      merged.radarrBaseUrl,
+      DEFAULT_SETTINGS.radarrBaseUrl
+    );
+    merged.sonarrBaseUrl = normalizeBaseUrl(
+      merged.sonarrBaseUrl,
+      DEFAULT_SETTINGS.sonarrBaseUrl
+    );
+    merged.prowlarrBaseUrl = normalizeBaseUrl(
+      merged.prowlarrBaseUrl,
+      DEFAULT_SETTINGS.prowlarrBaseUrl
+    );
+    merged.behavior = [
+      "openSearchPage",
+      "showPopupResults",
+      "autoAdd"
+    ].includes(merged.behavior)
+      ? merged.behavior
+      : DEFAULT_SETTINGS.behavior;
+    merged.sonarrSeasonFolder = merged.sonarrSeasonFolder !== false;
+    merged.showProwlarrButton = merged.showProwlarrButton !== false;
+    merged.prowlarrLimit = clampInt(
+      merged.prowlarrLimit,
+      1,
+      100,
+      DEFAULT_SETTINGS.prowlarrLimit
+    );
+
+    return merged;
+  }
+
+  function getDisplayTitle(media) {
+    const pageTitle = typeof document === "undefined" ? "" : document.title;
+
+    return (
+      normalizeSpace(media?.title) ||
+      normalizeSpace(media?.originalTitle) ||
+      stripArrSuffix(pageTitle)
+    );
+  }
+
+  function searchTitleCandidates(media) {
+    const pageTitle = typeof document === "undefined" ? "" : document.title;
+    const releaseTitles = Array.isArray(media?.releaseTitles) ? media.releaseTitles : [];
+    const alternativeTitles = Array.isArray(media?.alternativeTitles) ? media.alternativeTitles : [];
+
+    return uniqueSearchTitles([
+      normalizeSpace(media?.searchTitle),
+      ...releaseTitles,
+      normalizeSpace(media?.title),
+      ...alternativeTitles,
+      normalizeSpace(media?.originalTitle),
+      stripArrSuffix(pageTitle)
+    ]);
+  }
+
+  function getSearchTitle(media) {
+    return searchTitleCandidates(media)[0] || "";
+  }
+
+  function titleYearTerm(media) {
+    const title = getDisplayTitle(media);
+    const year = media?.year ? String(media.year) : "";
+    return normalizeSpace(`${title} ${year}`);
+  }
+
+  function padNumber(value, width = 2) {
+    return String(value || "").padStart(width, "0");
+  }
+
+  function prowlarrTermForTitle(media, title) {
+    const normalizedTitle = normalizeSpace(title);
+
+    if (!normalizedTitle) {
+      return "";
+    }
+
+    if (media?.seasonNumber && media?.episodeNumber) {
+      return normalizeSpace(
+        `${normalizedTitle} S${padNumber(media.seasonNumber)}E${padNumber(media.episodeNumber)}`
+      );
+    }
+
+    if (media?.seasonNumber) {
+      return normalizeSpace(`${normalizedTitle} S${padNumber(media.seasonNumber)}`);
+    }
+
+    const year = media?.year ? String(media.year) : "";
+    return normalizeSpace(`${normalizedTitle} ${year}`);
+  }
+
+  function prowlarrTerms(media) {
+    return uniqueSearchTitles([
+      ...searchTitleCandidates(media).map((title) => prowlarrTermForTitle(media, title)),
+      titleYearTerm(media)
+    ]);
+  }
+
+  function prowlarrTerm(media) {
+    return prowlarrTerms(media)[0] || titleYearTerm(media);
+  }
+
+  function buildSearchPlan(service, media) {
+    const normalizedService = ["sonarr", "prowlarr"].includes(service)
+      ? service
+      : "radarr";
+    const term = titleYearTerm(media);
+
+    if (normalizedService === "prowlarr") {
+      const query = prowlarrTerm(media);
+
+      return {
+        kind: "query",
+        term: query,
+        apiPath: "/api/v1/search",
+        apiParams: {
+          query,
+          type: "search",
+          limit: DEFAULT_SETTINGS.prowlarrLimit,
+          offset: 0
+        },
+        fallbackTerm: query
+      };
+    }
+
+    if (normalizedService === "radarr") {
+      if (media?.tmdbId && media?.tmdbType !== "tv") {
+        return {
+          kind: "tmdb",
+          term: `tmdb:${media.tmdbId}`,
+          apiPath: "/api/v3/movie/lookup/tmdb",
+          apiParams: { tmdbId: media.tmdbId },
+          fallbackTerm: `tmdb:${media.tmdbId}`
+        };
+      }
+
+      if (media?.imdbId) {
+        return {
+          kind: "imdb",
+          term: `imdb:${media.imdbId}`,
+          apiPath: "/api/v3/movie/lookup/imdb",
+          apiParams: { imdbId: media.imdbId },
+          fallbackTerm: `imdb:${media.imdbId}`
+        };
+      }
+
+      return {
+        kind: "term",
+        term,
+        apiPath: "/api/v3/movie/lookup",
+        apiParams: { term },
+        fallbackTerm: term
+      };
+    }
+
+    if (media?.tvdbId) {
+      return {
+        kind: "tvdb",
+        term: `tvdb:${media.tvdbId}`,
+        apiPath: "/api/v3/series/lookup",
+        apiParams: { term: `tvdb:${media.tvdbId}` },
+        fallbackTerm: `tvdb:${media.tvdbId}`
+      };
+    }
+
+    if (media?.tmdbId && media?.tmdbType !== "movie") {
+      return {
+        kind: "tmdb",
+        term: `tmdb:${media.tmdbId}`,
+        apiPath: "/api/v3/series/lookup",
+        apiParams: { term: `tmdb:${media.tmdbId}` },
+        fallbackTerm: `tmdb:${media.tmdbId}`
+      };
+    }
+
+    return {
+      kind: "term",
+      term,
+      apiPath: "/api/v3/series/lookup",
+      apiParams: { term },
+      fallbackTerm: term
+    };
+  }
+
+  function buildUrl(baseUrl, path, params = {}) {
+    const parsed = new URL(normalizeBaseUrl(baseUrl, baseUrl));
+    const basePath = parsed.pathname.replace(/\/+$/, "");
+    parsed.pathname = `${basePath}${path.startsWith("/") ? path : `/${path}`}`;
+
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined && value !== null && value !== "") {
+        parsed.searchParams.set(key, String(value));
+      }
+    }
+
+    return parsed.toString();
+  }
+
+  function buildAddPageUrl(baseUrl, term) {
+    return buildUrl(baseUrl, "/add/new", { term });
+  }
+
+  function buildProwlarrSearchPageUrl(baseUrl, query, limit = DEFAULT_SETTINGS.prowlarrLimit) {
+    return buildUrl(baseUrl, "/search", {
+      query,
+      type: "search",
+      limit,
+      offset: 0
+    });
+  }
+
+  function buildDetailPageUrl(baseUrl, service, result) {
+    if (!result?.titleSlug) {
+      return null;
+    }
+
+    return buildUrl(baseUrl, service === "radarr" ? "/movie/" : "/series/") +
+      encodeURIComponent(result.titleSlug);
+  }
+
+  function serviceBaseUrl(settings, service) {
+    if (service === "radarr") {
+      return settings.radarrBaseUrl;
+    }
+
+    if (service === "prowlarr") {
+      return settings.prowlarrBaseUrl;
+    }
+
+    return settings.sonarrBaseUrl;
+  }
+
+  function serviceApiKey(settings, service) {
+    if (service === "radarr") {
+      return settings.radarrApiKey;
+    }
+
+    if (service === "prowlarr") {
+      return settings.prowlarrApiKey;
+    }
+
+    return settings.sonarrApiKey;
+  }
+
+  function isLocalhostUrl(baseUrl) {
+    try {
+      const host = new URL(normalizeBaseUrl(baseUrl, baseUrl)).hostname;
+      return ["localhost", "127.0.0.1", "::1"].includes(host);
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  function summarizeResult(result) {
+    return {
+      title: result?.title || result?.originalTitle || "",
+      originalTitle: result?.originalTitle || "",
+      year: result?.year || "",
+      titleSlug: result?.titleSlug || "",
+      tmdbId: result?.tmdbId || "",
+      tvdbId: result?.tvdbId || "",
+      imdbId: result?.imdbId || "",
+      status: result?.status || "",
+      overview: normalizeSpace(result?.overview || "").slice(0, 220)
+    };
+  }
+
+  function summarizeRelease(result) {
+    return {
+      title: result?.title || "",
+      indexer: result?.indexer || "",
+      size: result?.size || 0,
+      seeders: result?.seeders ?? "",
+      leechers: result?.leechers ?? "",
+      publishDate: result?.publishDate || "",
+      protocol: result?.protocol || "",
+      infoUrl: result?.infoUrl || "",
+      guid: result?.guid || "",
+      indexerId: result?.indexerId || ""
+    };
+  }
+
+  globalThis.AdbArrConfig = {
+    DEFAULT_SETTINGS,
+    SERVICE_LABELS,
+    stripArrSuffix,
+    normalizeSpace,
+    normalizeBaseUrl,
+    mergeSettings,
+    cleanReleaseSearchTitle,
+    uniqueSearchTitles,
+    getSearchTitle,
+    titleYearTerm,
+    prowlarrTerms,
+    prowlarrTerm,
+    buildSearchPlan,
+    buildUrl,
+    buildAddPageUrl,
+    buildProwlarrSearchPageUrl,
+    buildDetailPageUrl,
+    serviceBaseUrl,
+    serviceApiKey,
+    isLocalhostUrl,
+    summarizeResult,
+    summarizeRelease
+  };
+})();

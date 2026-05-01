@@ -1,0 +1,30 @@
+# Local virtual environments
+.venv/
+venv/
+
+# Dependencies / caches
+node_modules/
+.cache/
+
+# Generated packages
+*.zip
+*.xpi
+release/
+dist/
+build/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local secrets
+.env
+.env.*
