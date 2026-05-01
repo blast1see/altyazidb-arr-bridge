@@ -69,6 +69,25 @@ function connectionErrorMessage(service, baseUrl) {
     : `Could not connect to ${label}`;
 }
 
+// Firefox/Zen strictly enforce CORS even from extension contexts when the
+// target server omits Access-Control-Allow-Origin. Jackett ships with
+// AllowCORS=false by default, so this specific failure mode needs a
+// distinct, actionable error surface so users don't chase phantom network issues.
+function isLikelyCorsError(err) {
+  if (!err) return false;
+  const name = String(err.name || "");
+  const msg = String(err.message || "");
+  if (name !== "TypeError") return false;
+  return /NetworkError when attempting to fetch|Failed to fetch|CORS|Access-Control-Allow-Origin/i.test(msg);
+}
+
+function fetchFailureMessage(service, baseUrl, err) {
+  if (isLikelyCorsError(err) && service === "jackett") {
+    return "Jackett blocked by CORS. Open http://127.0.0.1:9117 → Configure Jackett → check 'CORS' (Allow CORS) → Apply Server Settings, then retry.";
+  }
+  return connectionErrorMessage(service, baseUrl);
+}
+
 function statusPath(service) {
   if (service === "prowlarr") {
     return { path: "/api/v1/system/status", params: {} };
@@ -150,8 +169,8 @@ async function callArrApi(service, settings, path, params = {}, options = {}) {
       headers,
       body: options.body ? JSON.stringify(options.body) : undefined
     });
-  } catch (_error) {
-    throw new ArrBridgeError("connect", connectionErrorMessage(service, baseUrl));
+  } catch (error) {
+    throw new ArrBridgeError("connect", fetchFailureMessage(service, baseUrl, error));
   }
 
   if (response.status === 401 || response.status === 403) {

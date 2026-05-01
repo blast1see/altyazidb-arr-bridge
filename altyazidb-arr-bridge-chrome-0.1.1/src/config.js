@@ -1,14 +1,14 @@
 (() => {
   const DEFAULT_SETTINGS = {
-    radarrBaseUrl: "http://localhost:7878",
+    radarrBaseUrl: "http://127.0.0.1:7878",
     radarrApiKey: "",
-    sonarrBaseUrl: "http://localhost:8989",
+    sonarrBaseUrl: "http://127.0.0.1:8989",
     sonarrApiKey: "",
-    prowlarrBaseUrl: "http://localhost:9696",
+    prowlarrBaseUrl: "http://127.0.0.1:9696",
     prowlarrApiKey: "",
     showProwlarrButton: true,
     prowlarrLimit: 25,
-    jackettBaseUrl: "http://localhost:9117",
+    jackettBaseUrl: "http://127.0.0.1:9117",
     jackettApiKey: "",
     showJackettButton: true,
     jackettLimit: 25,

@@ -5,12 +5,12 @@ $chromeDir = Join-Path $root "altyazidb-arr-bridge-chrome-0.1.1"
 $firefoxDir = Join-Path $root "altyazidb-arr-bridge-firefox-0.1.1"
 $tampermonkeyDir = Join-Path $root "tampermonkey"
 $releaseRoot = Join-Path $root "release"
-$releaseDir = Join-Path $releaseRoot "altyazidb-arr-bridge-complete-0.1.2"
+$releaseDir = Join-Path $releaseRoot "altyazidb-arr-bridge-complete-0.1.3"
 
-$chromeZip = Join-Path $root "altyazidb-arr-bridge-chrome-0.1.2.zip"
-$firefoxZip = Join-Path $root "altyazidb-arr-bridge-firefox-0.1.2.zip"
-$firefoxXpi = Join-Path $root "altyazidb-arr-bridge-firefox-0.1.2.xpi"
-$releaseZip = Join-Path $releaseRoot "altyazidb-arr-bridge-complete-0.1.2.zip"
+$chromeZip = Join-Path $root "altyazidb-arr-bridge-chrome-0.1.3.zip"
+$firefoxZip = Join-Path $root "altyazidb-arr-bridge-firefox-0.1.3.zip"
+$firefoxXpi = Join-Path $root "altyazidb-arr-bridge-firefox-0.1.3.xpi"
+$releaseZip = Join-Path $releaseRoot "altyazidb-arr-bridge-complete-0.1.3.zip"
 
 foreach ($path in @($chromeDir, $firefoxDir, $tampermonkeyDir)) {
   if (-not (Test-Path -LiteralPath $path)) {

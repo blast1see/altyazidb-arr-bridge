@@ -1,11 +1,11 @@
 /* eslint-disable no-console */
 /**
- * Static "Chrome dev-tools" grade verification for v0.1.2.
+ * Static "Chrome dev-tools" grade verification for v0.1.3.
  *
  * Because Chrome (policy-controlled) blocks automated --load-extension in
  * headless mode, we instead validate every invariant the chrome://extensions
  * loader would enforce:
- *   1. manifest.json parses, is MV3, version=0.1.2, all referenced files exist
+ *   1. manifest.json parses, is MV3, version=0.1.3, all referenced files exist
  *   2. host_permissions include Jackett (9117), web_accessible_resources grant
  *      the Jackett reference icon
  *   3. service_worker (background.js) syntax-checks and has access to config
@@ -65,7 +65,7 @@ function validateManifest(dir, label, expectMv3) {
     return;
   }
   const mf = readJson(mfPath);
-  check(`${label} manifest version`, mf.version === "0.1.2", `got ${mf.version}`);
+  check(`${label} manifest version`, mf.version === "0.1.3", `got ${mf.version}`);
   check(
     `${label} manifest_version`,
     mf.manifest_version === (expectMv3 ? 3 : 2),
@@ -167,7 +167,10 @@ try {
   new Function("globalThis", cfgSrc)(sandbox.globalThis);
   const cfg = sandbox.globalThis.AdbArrConfig;
   check("AdbArrConfig global exposed", !!cfg);
-  check("DEFAULT_SETTINGS.jackettBaseUrl", cfg?.DEFAULT_SETTINGS?.jackettBaseUrl === "http://localhost:9117");
+  check("DEFAULT_SETTINGS.jackettBaseUrl (v0.1.3 uses 127.0.0.1)", cfg?.DEFAULT_SETTINGS?.jackettBaseUrl === "http://127.0.0.1:9117");
+  check("DEFAULT_SETTINGS.radarrBaseUrl (v0.1.3 uses 127.0.0.1)", cfg?.DEFAULT_SETTINGS?.radarrBaseUrl === "http://127.0.0.1:7878");
+  check("DEFAULT_SETTINGS.sonarrBaseUrl (v0.1.3 uses 127.0.0.1)", cfg?.DEFAULT_SETTINGS?.sonarrBaseUrl === "http://127.0.0.1:8989");
+  check("DEFAULT_SETTINGS.prowlarrBaseUrl (v0.1.3 uses 127.0.0.1)", cfg?.DEFAULT_SETTINGS?.prowlarrBaseUrl === "http://127.0.0.1:9696");
   check("DEFAULT_SETTINGS.jackettApiKey defined", typeof cfg?.DEFAULT_SETTINGS?.jackettApiKey === "string");
   check("DEFAULT_SETTINGS.showJackettButton=true", cfg?.DEFAULT_SETTINGS?.showJackettButton === true);
   check("DEFAULT_SETTINGS.jackettLimit=25", cfg?.DEFAULT_SETTINGS?.jackettLimit === 25);
@@ -179,10 +182,10 @@ try {
   check("jackettTerms is a fn", typeof cfg?.jackettTerms === "function");
 
   // Functional smoke tests
-  const url = cfg.buildJackettSearchPageUrl("http://localhost:9117", "The Boys 2019");
+  const url = cfg.buildJackettSearchPageUrl("http://127.0.0.1:9117", "The Boys 2019");
   check(
     "buildJackettSearchPageUrl → hash-fragment",
-    url === "http://localhost:9117/UI/Dashboard#search=The%20Boys%202019",
+    url === "http://127.0.0.1:9117/UI/Dashboard#search=The%20Boys%202019",
     url,
   );
   const plan = cfg.buildSearchPlan("jackett", { title: "Michael", year: 2024 });
@@ -266,13 +269,44 @@ check(
   "background.js skips X-Api-Key header for jackett",
   /service !== "jackett"/.test(bgJs),
 );
+check(
+  "background.js has isLikelyCorsError helper (v0.1.3 CORS detection)",
+  /function\s+isLikelyCorsError/.test(bgJs),
+);
+check(
+  "background.js has fetchFailureMessage helper (v0.1.3 CORS detection)",
+  /function\s+fetchFailureMessage/.test(bgJs),
+);
+check(
+  "background.js surfaces CORS-specific Jackett hint",
+  /Jackett blocked by CORS/.test(bgJs),
+);
+check(
+  "background.js catch block routes through fetchFailureMessage",
+  /fetchFailureMessage\(service,\s*baseUrl,\s*error\)/.test(bgJs),
+);
+
+// Mirror assertions against the Firefox bundle
+const ffBgJs = fs.readFileSync(path.join(FF_DIR, "src", "background.js"), "utf8");
+check(
+  "firefox background.js has isLikelyCorsError helper",
+  /function\s+isLikelyCorsError/.test(ffBgJs),
+);
+check(
+  "firefox background.js surfaces CORS-specific Jackett hint",
+  /Jackett blocked by CORS/.test(ffBgJs),
+);
+check(
+  "firefox background.js catch block routes through fetchFailureMessage",
+  /fetchFailureMessage\(service,\s*baseUrl,\s*error\)/.test(ffBgJs),
+);
 
 // ---------- 8. Tampermonkey Jackett integration ----------
 console.log("\n--- Tampermonkey Jackett integration ---");
 const tm = fs.readFileSync(TM, "utf8");
-check("tm userscript @version 0.1.2-tm", tm.includes("@version      0.1.2-tm"));
+check("tm userscript @version 0.1.3-tm", tm.includes("@version      0.1.3-tm"));
 check("tm userscript mentions Jackett in @description", tm.includes("Jackett buttons"));
-check("tm DEFAULT_SETTINGS.jackettBaseUrl", tm.includes('jackettBaseUrl: "http://localhost:9117"'));
+check("tm DEFAULT_SETTINGS.jackettBaseUrl (v0.1.3 uses 127.0.0.1)", tm.includes('jackettBaseUrl: "http://127.0.0.1:9117"'));
 check("tm SERVICE_LABELS.jackett", tm.includes('jackett: "Jackett"'));
 check("tm ICONS.jackett defined", /jackett:\s*pngData/.test(tm));
 check("tm lookupJackett function", /async function lookupJackett/.test(tm));
@@ -288,7 +322,7 @@ if (issues.length) {
   for (const i of issues) console.log("  ✗", i);
   process.exit(1);
 }
-console.log("\nAll Chrome dev-tools loader invariants satisfied for v0.1.2.");
+console.log("\nAll Chrome dev-tools loader invariants satisfied for v0.1.3.");
 console.log("To verify the runtime service worker in a live Chrome UI:");
 console.log("  1. Open chrome://extensions, enable Developer mode");
 console.log(`  2. Click 'Load unpacked', pick: ${EXT_DIR}`);

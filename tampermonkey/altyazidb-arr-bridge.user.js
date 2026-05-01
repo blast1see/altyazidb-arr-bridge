@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AltyaziDB Arr Bridge
 // @namespace    https://altyazidb.com/
-// @version      0.1.2-tm
+// @version      0.1.3-tm
 // @description  Adds Radarr, Sonarr, optional Prowlarr, and optional Jackett buttons to AltyaziDB subtitle pages.
 // @match        http://altyazidb.com/*
 // @match        http://*.altyazidb.com/*
@@ -53,15 +53,15 @@
   const NON_SUBTITLE_PATH_RE = /^\/(?:forum|user|uploads|engine|index\.php|search|page|lastnews|allnews|tags|stats|statistics|register|login|lostpassword|autobackup|admin|index)(?:\/|$)/i;
 
   const DEFAULT_SETTINGS = {
-    radarrBaseUrl: "http://localhost:7878",
+    radarrBaseUrl: "http://127.0.0.1:7878",
     radarrApiKey: "",
-    sonarrBaseUrl: "http://localhost:8989",
+    sonarrBaseUrl: "http://127.0.0.1:8989",
     sonarrApiKey: "",
-    prowlarrBaseUrl: "http://localhost:9696",
+    prowlarrBaseUrl: "http://127.0.0.1:9696",
     prowlarrApiKey: "",
     showProwlarrButton: true,
     prowlarrLimit: 25,
-    jackettBaseUrl: "http://localhost:9117",
+    jackettBaseUrl: "http://127.0.0.1:9117",
     jackettApiKey: "",
     showJackettButton: true,
     jackettLimit: 25,

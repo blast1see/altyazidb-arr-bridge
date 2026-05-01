@@ -24,6 +24,8 @@ altyazidb-arr-bridge-chrome-0.1.1/   Chrome / Chromium / Zen / Brave / Edge ekle
 altyazidb-arr-bridge-firefox-0.1.1/  Firefox eklenti kaynağı
 tampermonkey/                        Tampermonkey userscript kaynağı
 scripts/package.ps1                  Zip / XPI / release arşivi oluşturma scripti
+scripts/install-jackett-v6-proxy.ps1 Jackett için IPv6 (`[::1]`) → IPv4 portproxy kurulumu
+scripts/enable-jackett-cors.ps1      Jackett `AllowCORS=true` ayarını otomatik açar
 OPTIMIZATIONS.md                     Optimizasyon denetimi
 README.md                            Türkçe + English dokümantasyon
 ```
@@ -32,9 +34,12 @@ Zip, XPI ve `release/` çıktıları GitHub kaynak takibine alınmaz. Paket üre
 
 ### Varsayılan Yerel Adresler
 
-- Radarr: `http://localhost:7878`
-- Sonarr: `http://localhost:8989`
-- Prowlarr: `http://localhost:9696`
+- Radarr: `http://127.0.0.1:7878`
+- Sonarr: `http://127.0.0.1:8989`
+- Prowlarr: `http://127.0.0.1:9696`
+- Jackett: `http://127.0.0.1:9117`
+
+Windows'ta `localhost` önce IPv6 (`::1`) olarak çözümlenir. Jackett varsayılan olarak sadece IPv4 dinler, bu yüzden v0.1.3'ten itibaren varsayılan URL'ler `127.0.0.1` kullanır. Ayrıntılar için aşağıdaki **Sorun Giderme** bölümüne bak.
 
 ### API Anahtarı Ne İşe Yarıyor?
 
@@ -134,10 +139,27 @@ PowerShell ile:
 
 Bu komut şunları üretir:
 
-- `altyazidb-arr-bridge-chrome-0.1.1.zip`
-- `altyazidb-arr-bridge-firefox-0.1.1.zip`
-- `altyazidb-arr-bridge-firefox-0.1.1.xpi`
-- `release/altyazidb-arr-bridge-complete-0.1.1.zip`
+- `altyazidb-arr-bridge-chrome-0.1.3.zip`
+- `altyazidb-arr-bridge-firefox-0.1.3.zip`
+- `altyazidb-arr-bridge-firefox-0.1.3.xpi`
+- `release/altyazidb-arr-bridge-complete-0.1.3.zip`
+
+### Sorun Giderme
+
+#### "Could not connect to Jackett" / Bağlantı hatası
+
+Firefox veya Zen tarayıcıda Test Jackett başarısız oluyorsa üç nedenin biri geçerlidir:
+
+1. **IPv6 tuzağı** — `localhost`, Windows'ta önce `::1` (IPv6) olarak çözümlenir. Jackett varsayılan olarak yalnızca `127.0.0.1` (IPv4) dinler, bu nedenle tarayıcı `[::1]:9117`'ye bağlanmayı dener ve bağlantı reddedilir.
+   - **Çözüm A (önerilen):** Base URL alanında `http://127.0.0.1:9117` kullan. v0.1.3 varsayılanı zaten bu.
+   - **Çözüm B:** `scripts/install-jackett-v6-proxy.ps1` scriptini yönetici olarak çalıştır. `[::1]:9117 → 127.0.0.1:9117` portproxy'si kurar, yalnızca loopback arayüzünde çalışır (LAN'a açılmaz).
+
+2. **CORS engellemesi (Firefox / Zen)** — Jackett varsayılan olarak `AllowCORS=false` ile gelir. Firefox uzantı bağlamından bile `Access-Control-Allow-Origin` header'ı arar; header yoksa `fetch()` CORS hatasıyla başarısız olur. Chrome daha esnektir ve bu hatayı göstermez.
+   - **Çözüm A (UI):** Jackett arayüzünü aç → `Configure Jackett` → `CORS` (Allow CORS) kutusunu işaretle → `Apply Server Settings` ile kaydet.
+   - **Çözüm B (script):** `scripts/enable-jackett-cors.ps1` scripti Jackett'i kapatır, `ServerConfig.json` içinde `AllowCORS=true` yapar ve yeniden başlatır.
+   - v0.1.3'ten itibaren eklenti CORS hatasını algılayıp "Jackett blocked by CORS" gibi anlaşılır bir mesaj üretir.
+
+3. **API anahtarı hatası** — 401/Unauthorized alıyorsan Jackett `Dashboard` sayfasının üst kısmındaki `API Key` değerini ayarlara kopyala. Anahtar saklanırken yalnızca `X-Api-Key` header'ı veya query parametresi olarak gönderilir.
 
 ### Test
 
@@ -183,6 +205,8 @@ altyazidb-arr-bridge-chrome-0.1.1/   Chrome / Chromium / Zen / Brave / Edge exte
 altyazidb-arr-bridge-firefox-0.1.1/  Firefox extension source
 tampermonkey/                        Tampermonkey userscript source
 scripts/package.ps1                  Zip / XPI / release archive packaging script
+scripts/install-jackett-v6-proxy.ps1 IPv6 (`[::1]`) → IPv4 portproxy installer for Jackett
+scripts/enable-jackett-cors.ps1      Enables `AllowCORS=true` in Jackett automatically
 OPTIMIZATIONS.md                     Optimization audit
 README.md                            Turkish + English documentation
 ```
@@ -191,9 +215,12 @@ Zip, XPI, and `release/` outputs are ignored by git. Use `scripts/package.ps1` t
 
 ### Default Local URLs
 
-- Radarr: `http://localhost:7878`
-- Sonarr: `http://localhost:8989`
-- Prowlarr: `http://localhost:9696`
+- Radarr: `http://127.0.0.1:7878`
+- Sonarr: `http://127.0.0.1:8989`
+- Prowlarr: `http://127.0.0.1:9696`
+- Jackett: `http://127.0.0.1:9117`
+
+On Windows, `localhost` resolves to IPv6 (`::1`) first. Jackett listens on IPv4 only by default, so as of v0.1.3 the defaults use `127.0.0.1` explicitly. See the **Troubleshooting** section below for details.
 
 ### What API Keys Do
 
@@ -293,10 +320,27 @@ Run from PowerShell:
 
 This creates:
 
-- `altyazidb-arr-bridge-chrome-0.1.1.zip`
-- `altyazidb-arr-bridge-firefox-0.1.1.zip`
-- `altyazidb-arr-bridge-firefox-0.1.1.xpi`
-- `release/altyazidb-arr-bridge-complete-0.1.1.zip`
+- `altyazidb-arr-bridge-chrome-0.1.3.zip`
+- `altyazidb-arr-bridge-firefox-0.1.3.zip`
+- `altyazidb-arr-bridge-firefox-0.1.3.xpi`
+- `release/altyazidb-arr-bridge-complete-0.1.3.zip`
+
+### Troubleshooting
+
+#### "Could not connect to Jackett" / Connection error
+
+If Test Jackett fails in Firefox or Zen, one of three causes usually applies:
+
+1. **IPv6 trap** — On Windows, `localhost` resolves to `::1` (IPv6) first. Jackett binds to `127.0.0.1` (IPv4) only by default, so the browser tries `[::1]:9117` and the connection is refused.
+   - **Fix A (recommended):** Use `http://127.0.0.1:9117` as the Base URL. This is the v0.1.3 default.
+   - **Fix B:** Run `scripts/install-jackett-v6-proxy.ps1` as Administrator. It installs a `[::1]:9117 → 127.0.0.1:9117` netsh portproxy that is loopback-only (not exposed to the LAN).
+
+2. **CORS block (Firefox / Zen)** — Jackett ships with `AllowCORS=false`. Firefox enforces CORS strictly even from extension contexts, so `fetch()` fails with a CORS error when the `Access-Control-Allow-Origin` header is missing. Chrome is more permissive and typically does not hit this.
+   - **Fix A (UI):** Open the Jackett dashboard → `Configure Jackett` → tick `CORS` (Allow CORS) → `Apply Server Settings`.
+   - **Fix B (script):** Run `scripts/enable-jackett-cors.ps1`. It stops Jackett, patches `ServerConfig.json` with `AllowCORS=true`, and restarts it.
+   - Starting with v0.1.3 the extension detects this failure mode and surfaces a targeted message ("Jackett blocked by CORS…") instead of a generic connection error.
+
+3. **API key / 401** — If you see Unauthorized, copy the `API Key` from the top of the Jackett `Dashboard` page into the extension settings. Keys are sent only as `X-Api-Key` header or `apikey` query parameter.
 
 ### Testing
 
