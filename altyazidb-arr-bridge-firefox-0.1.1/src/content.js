@@ -448,23 +448,29 @@
   }
 
   function serviceForMedia(media, settings) {
-    const appendProwlarr = (services) => {
+    const appendOptional = (services) => {
+      const extras = [];
+
       if (settings?.showProwlarrButton !== false) {
-        return [...services, "prowlarr"];
+        extras.push("prowlarr");
       }
 
-      return services;
+      if (settings?.showJackettButton !== false) {
+        extras.push("jackett");
+      }
+
+      return [...services, ...extras];
     };
 
     if (media.mediaType === "movie") {
-      return appendProwlarr(["radarr"]);
+      return appendOptional(["radarr"]);
     }
 
     if (["series", "anime", "season", "episode"].includes(media.mediaType)) {
-      return appendProwlarr(["sonarr"]);
+      return appendOptional(["sonarr"]);
     }
 
-    return appendProwlarr(["radarr", "sonarr"]);
+    return appendOptional(["radarr", "sonarr"]);
   }
 
   function isLikelyDetailPage(_media) {
@@ -506,7 +512,27 @@
       return "Prowlarr";
     }
 
+    if (service === "jackett") {
+      return "Jackett";
+    }
+
     return "Sonarr";
+  }
+
+  function iconAssetPath(service) {
+    if (service === "radarr") {
+      return "assets/radarr-reference.png";
+    }
+
+    if (service === "prowlarr") {
+      return "assets/prowlarr-reference.png";
+    }
+
+    if (service === "jackett") {
+      return "assets/jackett-reference.png";
+    }
+
+    return "assets/sonarr-reference.png";
   }
 
   function createButton(service, media) {
@@ -521,13 +547,7 @@
     button.dataset.service = service;
 
     icon.className = "adb-arr-icon";
-    icon.src = assetUrl(
-      service === "radarr"
-        ? "assets/radarr-reference.png"
-        : service === "prowlarr"
-          ? "assets/prowlarr-reference.png"
-          : "assets/sonarr-reference.png"
-    );
+    icon.src = assetUrl(iconAssetPath(service));
     icon.alt = "";
 
     label.textContent = buttonLabel(service);
@@ -584,7 +604,7 @@
   }
 
   function resultMeta(service, result) {
-    if (service === "prowlarr") {
+    if (service === "prowlarr" || service === "jackett") {
       return [
         result.indexer || "",
         formatSize(result.size),

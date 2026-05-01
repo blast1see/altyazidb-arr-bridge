@@ -70,7 +70,22 @@ function connectionErrorMessage(service, baseUrl) {
 }
 
 function statusPath(service) {
-  return service === "prowlarr" ? "/api/v1/system/status" : "/api/v3/system/status";
+  if (service === "prowlarr") {
+    return { path: "/api/v1/system/status", params: {} };
+  }
+
+  if (service === "jackett") {
+    // `/api/v2.0/server/config` requires cookie-based admin auth and 302-redirects
+    // when authenticated with ?apikey=, so the status ping would hit the login page.
+    // `/api/v2.0/indexers/all/results` honours ?apikey= (200 on valid, 401 on invalid).
+    // A nonsense Query keeps the response small and avoids triggering real indexer searches.
+    return {
+      path: "/api/v2.0/indexers/all/results",
+      params: { Query: "__adb_ping__" }
+    };
+  }
+
+  return { path: "/api/v3/system/status", params: {} };
 }
 
 function fallbackUrlForService(service, settings, searchPlan) {
@@ -79,6 +94,10 @@ function fallbackUrlForService(service, settings, searchPlan) {
 
   if (service === "prowlarr") {
     return CFG.buildProwlarrSearchPageUrl(baseUrl, term, settings.prowlarrLimit);
+  }
+
+  if (service === "jackett") {
+    return CFG.buildJackettSearchPageUrl(baseUrl, term);
   }
 
   return CFG.buildAddPageUrl(baseUrl, term);
@@ -108,13 +127,18 @@ async function callArrApi(service, settings, path, params = {}, options = {}) {
     throw new ArrBridgeError("missingKey", `${label} API key missing`);
   }
 
-  const url = CFG.buildUrl(baseUrl, path, params);
+  // Jackett authenticates via ?apikey= query parameter rather than X-Api-Key header.
+  const requestParams = service === "jackett" && apiKey
+    ? { ...params, apikey: apiKey }
+    : params;
+
+  const url = CFG.buildUrl(baseUrl, path, requestParams);
   const headers = {
     Accept: "application/json",
     ...(options.body ? { "Content-Type": "application/json" } : {})
   };
 
-  if (apiKey) {
+  if (apiKey && service !== "jackett") {
     headers["X-Api-Key"] = apiKey;
   }
 
@@ -451,6 +475,94 @@ async function lookupProwlarr(media, settings) {
   };
 }
 
+async function lookupJackett(media, settings) {
+  const searchPlan = CFG.buildSearchPlan("jackett", media);
+  const searchPlans = CFG.jackettTerms(media).map((query) => ({
+    ...searchPlan,
+    term: query,
+    fallbackTerm: query,
+    apiParams: {
+      ...searchPlan.apiParams,
+      Query: query
+    }
+  }));
+  const plans = searchPlans.length ? searchPlans : [searchPlan];
+  const fallbackUrl = fallbackUrlForService("jackett", settings, plans[0]);
+
+  if (!CFG.serviceApiKey(settings, "jackett")) {
+    await createTab(fallbackUrl);
+    return {
+      ok: false,
+      service: "jackett",
+      error: "Jackett API key missing",
+      fallbackUrl,
+      opened: true,
+      message: "Jackett API key missing. Opened Jackett search fallback."
+    };
+  }
+
+  // Switch indexer segment if user pinned a single indexer in settings.
+  const indexer = settings.jackettIndexer && settings.jackettIndexer !== "all"
+    ? String(settings.jackettIndexer)
+    : "all";
+  const apiPath = `/api/v2.0/indexers/${encodeURIComponent(indexer)}/results`;
+
+  let activePlan = plans[0];
+  let releases = [];
+
+  for (const plan of plans) {
+    const data = await callArrApi(
+      "jackett",
+      settings,
+      apiPath,
+      plan.apiParams
+    );
+
+    // Jackett JSON shape: { Results: [...], Indexers: [...] }
+    const rawResults = Array.isArray(data?.Results) ? data.Results : normalizeResults(data);
+    releases = rawResults;
+    activePlan = plan;
+
+    if (releases.length) {
+      break;
+    }
+  }
+
+  if (!releases.length) {
+    return {
+      ok: false,
+      service: "jackett",
+      error: "No result found",
+      fallbackUrl,
+      searchTerm: plans.map((plan) => plan.term).join(" / ")
+    };
+  }
+
+  // Sort by seeders descending to surface healthy torrents first.
+  releases.sort((a, b) => Number(b?.Seeders || 0) - Number(a?.Seeders || 0));
+
+  if (settings.behavior === "showPopupResults") {
+    return {
+      ok: true,
+      service: "jackett",
+      mode: "showPopupResults",
+      searchTerm: activePlan.term,
+      fallbackUrl,
+      results: releases.slice(0, 8).map(CFG.summarizeJackettRelease)
+    };
+  }
+
+  await createTab(fallbackUrl);
+
+  return {
+    ok: true,
+    service: "jackett",
+    opened: true,
+    openedUrl: fallbackUrl,
+    message: "Opened Jackett search."
+  };
+}
+
 async function addResult(service, media, result, settings, fallbackUrl) {
   const label = serviceLabel(service);
   const existing = await findExisting(service, settings, result);
@@ -571,6 +683,16 @@ async function openResult(message) {
     return { ok: true, openedUrl: url };
   }
 
+  if (service === "jackett") {
+    const url = CFG.buildJackettSearchPageUrl(
+      CFG.serviceBaseUrl(settings, service),
+      searchPlan.fallbackTerm || searchPlan.term
+    );
+
+    await createTab(url);
+    return { ok: true, openedUrl: url };
+  }
+
   const existing = CFG.serviceApiKey(settings, service)
     ? await findExisting(service, settings, result)
     : null;
@@ -594,7 +716,8 @@ async function testConnection(service) {
   const settings = await getSettings();
 
   try {
-    await callArrApi(service, settings, statusPath(service));
+    const { path, params } = statusPath(service);
+    await callArrApi(service, settings, path, params);
     return {
       ok: true,
       service,
@@ -655,9 +778,15 @@ async function handleMessage(message) {
     }
 
     try {
-      return service === "prowlarr"
-        ? await lookupProwlarr(message.media || {}, settings)
-        : await lookupArr(service, message.media || {}, settings);
+      if (service === "prowlarr") {
+        return await lookupProwlarr(message.media || {}, settings);
+      }
+
+      if (service === "jackett") {
+        return await lookupJackett(message.media || {}, settings);
+      }
+
+      return await lookupArr(service, message.media || {}, settings);
     } catch (error) {
       const searchPlan = CFG.buildSearchPlan(service, message.media || {});
 

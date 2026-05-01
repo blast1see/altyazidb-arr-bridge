@@ -113,6 +113,24 @@
   font-size: 15px;
 }
 
+.adb-arr-button-jackett {
+  border-color: rgba(74, 144, 226, 0.58);
+  box-shadow:
+    0 0 0 1px rgba(74, 144, 226, 0.12),
+    0 10px 24px rgba(0, 0, 0, 0.22);
+}
+
+.adb-arr-button-jackett:hover {
+  border-color: rgba(74, 144, 226, 0.88);
+  box-shadow:
+    0 0 0 1px rgba(74, 144, 226, 0.2),
+    0 12px 28px rgba(0, 0, 0, 0.3);
+}
+
+.adb-arr-button-jackett span {
+  font-size: 15px;
+}
+
 .adb-arr-sr-only {
   position: absolute;
   width: 1px;
@@ -144,6 +162,12 @@
 }
 
 .adb-arr-button-prowlarr .adb-arr-icon {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+}
+
+.adb-arr-button-jackett .adb-arr-icon {
   width: 32px;
   height: 32px;
   object-fit: contain;

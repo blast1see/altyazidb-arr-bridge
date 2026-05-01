@@ -8,6 +8,11 @@
     prowlarrApiKey: "",
     showProwlarrButton: true,
     prowlarrLimit: 25,
+    jackettBaseUrl: "http://localhost:9117",
+    jackettApiKey: "",
+    showJackettButton: true,
+    jackettLimit: 25,
+    jackettIndexer: "all",
     behavior: "openSearchPage",
     radarrRootFolderPath: "",
     radarrQualityProfileId: "",
@@ -21,7 +26,8 @@
   const SERVICE_LABELS = {
     radarr: "Radarr",
     sonarr: "Sonarr",
-    prowlarr: "Prowlarr"
+    prowlarr: "Prowlarr",
+    jackett: "Jackett"
   };
 
   function stripArrSuffix(title) {
@@ -158,6 +164,10 @@
       merged.prowlarrBaseUrl,
       DEFAULT_SETTINGS.prowlarrBaseUrl
     );
+    merged.jackettBaseUrl = normalizeBaseUrl(
+      merged.jackettBaseUrl,
+      DEFAULT_SETTINGS.jackettBaseUrl
+    );
     merged.behavior = [
       "openSearchPage",
       "showPopupResults",
@@ -167,12 +177,20 @@
       : DEFAULT_SETTINGS.behavior;
     merged.sonarrSeasonFolder = merged.sonarrSeasonFolder !== false;
     merged.showProwlarrButton = merged.showProwlarrButton !== false;
+    merged.showJackettButton = merged.showJackettButton !== false;
     merged.prowlarrLimit = clampInt(
       merged.prowlarrLimit,
       1,
       100,
       DEFAULT_SETTINGS.prowlarrLimit
     );
+    merged.jackettLimit = clampInt(
+      merged.jackettLimit,
+      1,
+      100,
+      DEFAULT_SETTINGS.jackettLimit
+    );
+    merged.jackettIndexer = normalizeSpace(merged.jackettIndexer) || "all";
 
     return merged;
   }
@@ -248,8 +266,26 @@
     return prowlarrTerms(media)[0] || titleYearTerm(media);
   }
 
+  // Jackett queries accept both free-text and `tt<digits>` IMDb IDs.
+  // When an IMDb ID is known we search by it first because most indexers
+  // honour IMDb search, then we fall back to title+year variants.
+  function jackettImdbQuery(media) {
+    const raw = String(media?.imdbId || "").trim().toLowerCase();
+    return /^tt\d{7,10}$/.test(raw) ? raw : "";
+  }
+
+  function jackettTerms(media) {
+    const imdbQuery = jackettImdbQuery(media);
+    const textTerms = prowlarrTerms(media);
+    return uniqueSearchTitles(imdbQuery ? [imdbQuery, ...textTerms] : textTerms);
+  }
+
+  function jackettTerm(media) {
+    return jackettTerms(media)[0] || titleYearTerm(media);
+  }
+
   function buildSearchPlan(service, media) {
-    const normalizedService = ["sonarr", "prowlarr"].includes(service)
+    const normalizedService = ["sonarr", "prowlarr", "jackett"].includes(service)
       ? service
       : "radarr";
     const term = titleYearTerm(media);
@@ -266,6 +302,21 @@
           type: "search",
           limit: DEFAULT_SETTINGS.prowlarrLimit,
           offset: 0
+        },
+        fallbackTerm: query
+      };
+    }
+
+    if (normalizedService === "jackett") {
+      const imdbQuery = jackettImdbQuery(media);
+      const query = imdbQuery || jackettTerm(media);
+
+      return {
+        kind: imdbQuery ? "imdb" : "query",
+        term: query,
+        apiPath: "/api/v2.0/indexers/all/results",
+        apiParams: {
+          Query: query
         },
         fallbackTerm: query
       };
@@ -357,6 +408,18 @@
     });
   }
 
+  // Jackett's dashboard uses a hash-based search fragment, not query params.
+  function buildJackettSearchPageUrl(baseUrl, query) {
+    const normalized = normalizeBaseUrl(baseUrl, baseUrl);
+
+    if (!normalized) {
+      return "";
+    }
+
+    const encoded = encodeURIComponent(normalizeSpace(query));
+    return `${normalized}/UI/Dashboard#search=${encoded}`;
+  }
+
   function buildDetailPageUrl(baseUrl, service, result) {
     if (!result?.titleSlug) {
       return null;
@@ -375,6 +438,10 @@
       return settings.prowlarrBaseUrl;
     }
 
+    if (service === "jackett") {
+      return settings.jackettBaseUrl;
+    }
+
     return settings.sonarrBaseUrl;
   }
 
@@ -385,6 +452,10 @@
 
     if (service === "prowlarr") {
       return settings.prowlarrApiKey;
+    }
+
+    if (service === "jackett") {
+      return settings.jackettApiKey;
     }
 
     return settings.sonarrApiKey;
@@ -428,6 +499,27 @@
     };
   }
 
+  // Jackett JSON results use capitalized field names; normalize to the common shape.
+  function summarizeJackettRelease(result) {
+    const leechers =
+      typeof result?.Peers === "number" && typeof result?.Seeders === "number"
+        ? Math.max(result.Peers - result.Seeders, 0)
+        : "";
+
+    return {
+      title: result?.Title || "",
+      indexer: result?.Tracker || result?.TrackerId || "",
+      size: Number(result?.Size || 0),
+      seeders: result?.Seeders ?? "",
+      leechers,
+      publishDate: result?.PublishDate || "",
+      protocol: result?.MagnetUri || result?.InfoHash ? "torrent" : (result?.TrackerType || ""),
+      infoUrl: result?.Details || result?.Guid || "",
+      guid: result?.Guid || "",
+      indexerId: result?.TrackerId || ""
+    };
+  }
+
   globalThis.AdbArrConfig = {
     DEFAULT_SETTINGS,
     SERVICE_LABELS,
@@ -441,15 +533,19 @@
     titleYearTerm,
     prowlarrTerms,
     prowlarrTerm,
+    jackettTerms,
+    jackettTerm,
     buildSearchPlan,
     buildUrl,
     buildAddPageUrl,
     buildProwlarrSearchPageUrl,
+    buildJackettSearchPageUrl,
     buildDetailPageUrl,
     serviceBaseUrl,
     serviceApiKey,
     isLocalhostUrl,
     summarizeResult,
-    summarizeRelease
+    summarizeRelease,
+    summarizeJackettRelease
   };
 })();
