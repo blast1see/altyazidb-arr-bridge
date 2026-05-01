@@ -12,7 +12,7 @@
         <img src="assets/icon-48.png" alt="" class="options-app-icon">
         <div>
           <h1>AltyaziDB Arr Bridge</h1>
-          <p>Configure local Radarr and Sonarr lookup behavior.</p>
+          <p>Configure local Radarr, Sonarr, Prowlarr, and Jackett lookup behavior.</p>
         </div>
       </header>
 
@@ -142,6 +142,42 @@
 
           <div class="button-row">
             <button type="button" id="testProwlarr">Test Prowlarr</button>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-title">
+            <img src="assets/jackett-reference.png" alt="" class="panel-logo panel-logo-jackett">
+            <h2>Jackett</h2>
+          </div>
+
+          <label>
+            <span>Base URL</span>
+            <input id="jackettBaseUrl" name="jackettBaseUrl" type="url" spellcheck="false">
+          </label>
+
+          <label>
+            <span>API key</span>
+            <input id="jackettApiKey" name="jackettApiKey" type="password" spellcheck="false" autocomplete="off">
+          </label>
+
+          <label>
+            <span>Indexer (use "all" for every enabled tracker)</span>
+            <input id="jackettIndexer" name="jackettIndexer" type="text" spellcheck="false" placeholder="all">
+          </label>
+
+          <label>
+            <span>Search result limit</span>
+            <input id="jackettLimit" name="jackettLimit" type="number" min="1" max="100" step="1">
+          </label>
+
+          <label class="checkbox-label">
+            <input id="showJackettButton" name="showJackettButton" type="checkbox">
+            <span>Show Jackett search button on AltyaziDB pages</span>
+          </label>
+
+          <div class="button-row">
+            <button type="button" id="testJackett">Test Jackett</button>
           </div>
         </section>
 

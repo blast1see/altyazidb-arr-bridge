@@ -97,6 +97,11 @@
       prowlarrApiKey: getValue("prowlarrApiKey"),
       showProwlarrButton: getValue("showProwlarrButton"),
       prowlarrLimit: getValue("prowlarrLimit"),
+      jackettBaseUrl: getValue("jackettBaseUrl"),
+      jackettApiKey: getValue("jackettApiKey"),
+      jackettIndexer: getValue("jackettIndexer"),
+      jackettLimit: getValue("jackettLimit"),
+      showJackettButton: getValue("showJackettButton"),
       behavior: new FormData(form).get("behavior") || CFG.DEFAULT_SETTINGS.behavior,
       radarrRootFolderPath: getValue("radarrRootFolderPath"),
       radarrQualityProfileId: getValue("radarrQualityProfileId"),
@@ -184,12 +189,15 @@
       "http://localhost:8989/*",
       "http://127.0.0.1:8989/*",
       "http://localhost:9696/*",
-      "http://127.0.0.1:9696/*"
+      "http://127.0.0.1:9696/*",
+      "http://localhost:9117/*",
+      "http://127.0.0.1:9117/*"
     ]);
     const origins = [
       originPattern(settings.radarrBaseUrl),
       originPattern(settings.sonarrBaseUrl),
-      originPattern(settings.prowlarrBaseUrl)
+      originPattern(settings.prowlarrBaseUrl),
+      originPattern(settings.jackettBaseUrl)
     ].filter((origin) => origin && !defaultOrigins.has(origin));
 
     if (!origins.length) {
@@ -265,7 +273,10 @@
 
   async function testConnection(service, button) {
     button.disabled = true;
-    setStatus(`Testing ${service === "radarr" ? "Radarr" : "Sonarr"}...`);
+    const label =
+      CFG.SERVICE_LABELS[service] ||
+      (service === "radarr" ? "Radarr" : service === "sonarr" ? "Sonarr" : service);
+    setStatus(`Testing ${label}...`);
 
     try {
       const settings = readForm();
@@ -326,6 +337,7 @@
   field("testRadarr").addEventListener("click", (event) => testConnection("radarr", event.currentTarget));
   field("testSonarr").addEventListener("click", (event) => testConnection("sonarr", event.currentTarget));
   field("testProwlarr").addEventListener("click", (event) => testConnection("prowlarr", event.currentTarget));
+  field("testJackett")?.addEventListener("click", (event) => testConnection("jackett", event.currentTarget));
   field("loadRadarrChoices").addEventListener("click", (event) => loadChoices("radarr", event.currentTarget));
   field("loadSonarrChoices").addEventListener("click", (event) => loadChoices("sonarr", event.currentTarget));
 

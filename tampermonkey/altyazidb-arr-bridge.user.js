@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         AltyaziDB Arr Bridge
 // @namespace    https://altyazidb.com/
-// @version      0.1.1-tm
-// @description  Adds Radarr, Sonarr, and optional Prowlarr buttons to AltyaziDB subtitle pages.
+// @version      0.1.2-tm
+// @description  Adds Radarr, Sonarr, optional Prowlarr, and optional Jackett buttons to AltyaziDB subtitle pages.
 // @match        http://altyazidb.com/*
 // @match        http://*.altyazidb.com/*
 // @match        https://altyazidb.com/*
@@ -61,6 +61,11 @@
     prowlarrApiKey: "",
     showProwlarrButton: true,
     prowlarrLimit: 25,
+    jackettBaseUrl: "http://localhost:9117",
+    jackettApiKey: "",
+    showJackettButton: true,
+    jackettLimit: 25,
+    jackettIndexer: "all",
     behavior: "openSearchPage",
     radarrRootFolderPath: "",
     radarrQualityProfileId: "",
@@ -74,7 +79,8 @@
   const SERVICE_LABELS = {
     radarr: "Radarr",
     sonarr: "Sonarr",
-    prowlarr: "Prowlarr"
+    prowlarr: "Prowlarr",
+    jackett: "Jackett"
   };
 
   const ICONS = {
@@ -234,7 +240,10 @@
       mief0SUc2ryN9uvSJL8o0UIwwEWUaLTqMvQ5oIxtfpCOdc3Us+KANgWVb/MHrZqnNHPvUYLhIv4sUPdMFfEb6GuCKbOrc0Z51ZBPhSYcqyLPvvauY1HgIv6s
       aOUSKG//hMz9UyFb3Jx9OkhsNFdB96Yv0dCz6HsTrp619DrhIt4kaPYWDQzlnA9B5sEZbJ8E2fLPkDqvFpKnuLGi3dgpRn9THB2jc+hcms1M19KnDKm6Ko5Z
       SiUJLqKUtxsuopS3m/8PsJGnVnjO2RoAAAAASUVORK5CYII=
-    `)
+    `),
+    jackett: pngData(
+      "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"
+    )
   };
 
   class ArrBridgeError extends Error {
@@ -312,10 +321,12 @@
     merged.radarrBaseUrl = normalizeBaseUrl(merged.radarrBaseUrl, DEFAULT_SETTINGS.radarrBaseUrl);
     merged.sonarrBaseUrl = normalizeBaseUrl(merged.sonarrBaseUrl, DEFAULT_SETTINGS.sonarrBaseUrl);
     merged.prowlarrBaseUrl = normalizeBaseUrl(merged.prowlarrBaseUrl, DEFAULT_SETTINGS.prowlarrBaseUrl);
+    merged.jackettBaseUrl = normalizeBaseUrl(merged.jackettBaseUrl, DEFAULT_SETTINGS.jackettBaseUrl);
     merged.behavior = ["openSearchPage", "showPopupResults", "autoAdd"].includes(merged.behavior)
       ? merged.behavior
       : DEFAULT_SETTINGS.behavior;
     merged.showProwlarrButton = merged.showProwlarrButton !== false;
+    merged.showJackettButton = merged.showJackettButton !== false;
     merged.sonarrSeasonFolder = merged.sonarrSeasonFolder !== false;
     merged.prowlarrLimit = clampInt(
       merged.prowlarrLimit,
@@ -323,6 +334,13 @@
       100,
       DEFAULT_SETTINGS.prowlarrLimit
     );
+    merged.jackettLimit = clampInt(
+      merged.jackettLimit,
+      1,
+      100,
+      DEFAULT_SETTINGS.jackettLimit
+    );
+    merged.jackettIndexer = normalizeSpace(merged.jackettIndexer || "") || DEFAULT_SETTINGS.jackettIndexer;
 
     return merged;
   }
@@ -348,6 +366,10 @@
       return settings.prowlarrBaseUrl;
     }
 
+    if (service === "jackett") {
+      return settings.jackettBaseUrl;
+    }
+
     return settings.sonarrBaseUrl;
   }
 
@@ -358,6 +380,10 @@
 
     if (service === "prowlarr") {
       return settings.prowlarrApiKey;
+    }
+
+    if (service === "jackett") {
+      return settings.jackettApiKey;
     }
 
     return settings.sonarrApiKey;
@@ -512,8 +538,23 @@
     return prowlarrTerms(media)[0] || titleYearTerm(media);
   }
 
+  function jackettImdbQuery(media) {
+    const raw = String(media?.imdbId || "").trim().toLowerCase();
+    return /^tt\d{7,10}$/.test(raw) ? raw : "";
+  }
+
+  function jackettTerms(media) {
+    const imdbQuery = jackettImdbQuery(media);
+    const textTerms = prowlarrTerms(media);
+    return uniqueSearchTitles(imdbQuery ? [imdbQuery, ...textTerms] : textTerms);
+  }
+
+  function jackettTerm(media) {
+    return jackettTerms(media)[0] || titleYearTerm(media);
+  }
+
   function buildSearchPlan(service, media) {
-    const normalizedService = ["sonarr", "prowlarr"].includes(service) ? service : "radarr";
+    const normalizedService = ["sonarr", "prowlarr", "jackett"].includes(service) ? service : "radarr";
     const term = titleYearTerm(media);
 
     if (normalizedService === "prowlarr") {
@@ -528,6 +569,18 @@
           limit: DEFAULT_SETTINGS.prowlarrLimit,
           offset: 0
         },
+        fallbackTerm: query
+      };
+    }
+
+    if (normalizedService === "jackett") {
+      const imdbQuery = jackettImdbQuery(media);
+      const query = imdbQuery || jackettTerm(media);
+      return {
+        kind: imdbQuery ? "imdb" : "query",
+        term: query,
+        apiPath: "/api/v2.0/indexers/all/results",
+        apiParams: { Query: query },
         fallbackTerm: query
       };
     }
@@ -618,6 +671,14 @@
     });
   }
 
+  function buildJackettSearchPageUrl(baseUrl, query) {
+    const normalized = normalizeBaseUrl(baseUrl, baseUrl);
+    if (!normalized) {
+      return "";
+    }
+    return `${normalized}/UI/Dashboard#search=${encodeURIComponent(normalizeSpace(query))}`;
+  }
+
   function buildDetailPageUrl(baseUrl, service, result) {
     if (!result?.titleSlug) {
       return null;
@@ -628,7 +689,20 @@
   }
 
   function statusPath(service) {
-    return service === "prowlarr" ? "/api/v1/system/status" : "/api/v3/system/status";
+    if (service === "prowlarr") {
+      return { path: "/api/v1/system/status", params: {} };
+    }
+    if (service === "jackett") {
+      // `/api/v2.0/server/config` requires cookie-based admin auth and 302-redirects
+      // when authenticated with ?apikey=, so the status ping would hit the login page.
+      // `/api/v2.0/indexers/all/results` honours ?apikey= (200 on valid, 401 on invalid).
+      // A nonsense Query keeps the response small and avoids triggering real indexer searches.
+      return {
+        path: "/api/v2.0/indexers/all/results",
+        params: { Query: "__adb_ping__" }
+      };
+    }
+    return { path: "/api/v3/system/status", params: {} };
   }
 
   function fallbackUrlForService(service, settings, searchPlan) {
@@ -637,6 +711,10 @@
 
     if (service === "prowlarr") {
       return buildProwlarrSearchPageUrl(baseUrl, term, settings.prowlarrLimit);
+    }
+
+    if (service === "jackett") {
+      return buildJackettSearchPageUrl(baseUrl, term);
     }
 
     return buildAddPageUrl(baseUrl, term);
@@ -677,13 +755,17 @@
       throw new ArrBridgeError("missingKey", `${label} API key missing`);
     }
 
-    const url = buildUrl(baseUrl, path, params);
+    // Jackett authenticates via ?apikey= query parameter rather than X-Api-Key header.
+    const requestParams = service === "jackett" && apiKey
+      ? { ...params, apikey: apiKey }
+      : params;
+    const url = buildUrl(baseUrl, path, requestParams);
     const headers = {
       Accept: "application/json",
       ...(options.body ? { "Content-Type": "application/json" } : {})
     };
 
-    if (apiKey) {
+    if (apiKey && service !== "jackett") {
       headers["X-Api-Key"] = apiKey;
     }
 
@@ -831,6 +913,26 @@
       infoUrl: result?.infoUrl || "",
       guid: result?.guid || "",
       indexerId: result?.indexerId || ""
+    };
+  }
+
+  function summarizeJackettRelease(result) {
+    const seeders = typeof result?.Seeders === "number" ? result.Seeders : "";
+    const peers = typeof result?.Peers === "number" ? result.Peers : "";
+    const leechers = typeof peers === "number" && typeof seeders === "number"
+      ? Math.max(peers - seeders, 0)
+      : "";
+    return {
+      title: result?.Title || "",
+      indexer: result?.Tracker || result?.TrackerId || "",
+      size: Number(result?.Size || 0),
+      seeders,
+      leechers,
+      publishDate: result?.PublishDate || "",
+      protocol: result?.MagnetUri || result?.InfoHash ? "torrent" : (result?.TrackerType || ""),
+      infoUrl: result?.Details || result?.Guid || "",
+      guid: result?.Guid || "",
+      indexerId: result?.TrackerId || ""
     };
   }
 
@@ -1001,6 +1103,81 @@ async function lookupArr(service, media, settings) {
     };
   }
 
+  async function lookupJackett(media, settings) {
+    const searchPlan = buildSearchPlan("jackett", media);
+    const searchPlans = jackettTerms(media).map((query) => ({
+      ...searchPlan,
+      term: query,
+      fallbackTerm: query,
+      apiParams: { ...searchPlan.apiParams, Query: query }
+    }));
+    const plans = searchPlans.length ? searchPlans : [searchPlan];
+    const fallbackUrl = fallbackUrlForService("jackett", settings, plans[0]);
+
+    if (!serviceApiKey(settings, "jackett")) {
+      openUrl(fallbackUrl);
+      return {
+        ok: false,
+        service: "jackett",
+        error: "Jackett API key missing",
+        fallbackUrl,
+        opened: true,
+        message: "Jackett API key missing. Opened Jackett search fallback."
+      };
+    }
+
+    const rawIndexer = normalizeSpace(settings.jackettIndexer || "");
+    const indexer = rawIndexer && rawIndexer !== "all" ? rawIndexer : "all";
+    const apiPath = `/api/v2.0/indexers/${encodeURIComponent(indexer)}/results`;
+
+    let activePlan = plans[0];
+    let rawResults = [];
+
+    for (const plan of plans) {
+      const data = await callArrApi("jackett", settings, apiPath, plan.apiParams);
+      rawResults = Array.isArray(data?.Results) ? data.Results : [];
+      activePlan = plan;
+
+      if (rawResults.length) {
+        break;
+      }
+    }
+
+    if (!rawResults.length) {
+      return {
+        ok: false,
+        service: "jackett",
+        error: "No result found",
+        fallbackUrl,
+        searchTerm: plans.map((plan) => plan.term).join(" / ")
+      };
+    }
+
+    // Jackett returns raw indexer results; sort by seeders desc so healthy torrents surface first.
+    rawResults.sort((a, b) => Number(b?.Seeders || 0) - Number(a?.Seeders || 0));
+    const limit = clampInt(settings.jackettLimit, 1, 100, DEFAULT_SETTINGS.jackettLimit);
+
+    if (settings.behavior === "showPopupResults") {
+      return {
+        ok: true,
+        service: "jackett",
+        mode: "showPopupResults",
+        searchTerm: activePlan.term,
+        fallbackUrl,
+        results: rawResults.slice(0, Math.min(8, limit)).map(summarizeJackettRelease)
+      };
+    }
+
+    openUrl(fallbackUrl);
+    return {
+      ok: true,
+      service: "jackett",
+      opened: true,
+      openedUrl: fallbackUrl,
+      message: "Opened Jackett search."
+    };
+  }
+
   async function addResult(service, media, result, settings, fallbackUrl) {
     const label = serviceLabel(service);
     const existing = await findExisting(service, settings, result);
@@ -1116,6 +1293,20 @@ async function lookupArr(service, media, settings) {
       return { ok: true, openedUrl: url };
     }
 
+    if (service === "jackett") {
+      const directUrl = result?.infoUrl || "";
+      if (directUrl) {
+        openUrl(directUrl);
+        return { ok: true, openedUrl: directUrl };
+      }
+      const url = buildJackettSearchPageUrl(
+        serviceBaseUrl(settings, service),
+        searchPlan.fallbackTerm || searchPlan.term
+      );
+      openUrl(url);
+      return { ok: true, openedUrl: url };
+    }
+
     const existing = serviceApiKey(settings, service)
       ? await findExisting(service, settings, result)
       : null;
@@ -1136,7 +1327,8 @@ async function lookupArr(service, media, settings) {
 
   async function testConnection(service, settings) {
     try {
-      await callArrApi(service, settings, statusPath(service));
+      const { path, params } = statusPath(service);
+      await callArrApi(service, settings, path, params);
       return {
         ok: true,
         service,
@@ -1566,23 +1758,26 @@ async function lookupArr(service, media, settings) {
   }
 
   function serviceForMedia(media, settings) {
-    const appendProwlarr = (services) => {
+    const appendOptional = (services) => {
+      const out = [...services];
       if (settings?.showProwlarrButton !== false) {
-        return [...services, "prowlarr"];
+        out.push("prowlarr");
       }
-
-      return services;
+      if (settings?.showJackettButton !== false) {
+        out.push("jackett");
+      }
+      return out;
     };
 
     if (media.mediaType === "movie") {
-      return appendProwlarr(["radarr"]);
+      return appendOptional(["radarr"]);
     }
 
     if (["series", "anime", "season", "episode"].includes(media.mediaType)) {
-      return appendProwlarr(["sonarr"]);
+      return appendOptional(["sonarr"]);
     }
 
-    return appendProwlarr(["radarr", "sonarr"]);
+    return appendOptional(["radarr", "sonarr"]);
   }
 
   function isLikelyDetailPage(_media) {
@@ -2057,7 +2252,7 @@ async function lookupArr(service, media, settings) {
   }
 
   function resultMeta(service, result) {
-    if (service === "prowlarr") {
+    if (service === "prowlarr" || service === "jackett") {
       return [
         result.indexer || "",
         formatSize(result.size),
@@ -2174,7 +2369,9 @@ async function lookupArr(service, media, settings) {
       const settings = await getSettings();
       const response = service === "prowlarr"
         ? await lookupProwlarr(media, settings)
-        : await lookupArr(service, media, settings);
+        : service === "jackett"
+          ? await lookupJackett(media, settings)
+          : await lookupArr(service, media, settings);
 
       if (response?.mode === "showPopupResults") {
         renderResults(shell, service, media, response);
@@ -2292,6 +2489,11 @@ async function lookupArr(service, media, settings) {
       prowlarrApiKey: value("adbProwlarrApiKey"),
       showProwlarrButton: checked("adbShowProwlarrButton"),
       prowlarrLimit: value("adbProwlarrLimit"),
+      jackettBaseUrl: value("adbJackettBaseUrl"),
+      jackettApiKey: value("adbJackettApiKey"),
+      jackettIndexer: value("adbJackettIndexer") || DEFAULT_SETTINGS.jackettIndexer,
+      jackettLimit: value("adbJackettLimit"),
+      showJackettButton: checked("adbShowJackettButton"),
       behavior: value("adbBehavior") || DEFAULT_SETTINGS.behavior,
       radarrRootFolderPath: value("adbRadarrRootFolderPath"),
       radarrQualityProfileId: value("adbRadarrQualityProfileId"),
@@ -2425,6 +2627,24 @@ async function lookupArr(service, media, settings) {
             </label>
             <div class="adb-tm-options-row">
               <button type="button" data-test="prowlarr">Test Prowlarr</button>
+            </div>
+          </section>
+
+          <section class="adb-tm-panel">
+            <div class="adb-tm-panel-title">
+              <img class="adb-tm-icon" src="${ICONS.jackett}" alt="">
+              <h3>Jackett</h3>
+            </div>
+            <label>Base URL <input id="adbJackettBaseUrl" type="url" value="${escapeAttr(settings.jackettBaseUrl)}"></label>
+            <label>API key <input id="adbJackettApiKey" type="password" autocomplete="off" value="${escapeAttr(settings.jackettApiKey)}"></label>
+            <label>Indexer id <input id="adbJackettIndexer" type="text" placeholder="all" value="${escapeAttr(settings.jackettIndexer)}"></label>
+            <label>Search result limit <input id="adbJackettLimit" type="number" min="1" max="100" step="1" value="${escapeAttr(settings.jackettLimit)}"></label>
+            <label class="adb-tm-checkbox">
+              <input id="adbShowJackettButton" type="checkbox"${settings.showJackettButton !== false ? " checked" : ""}>
+              <span>Show Jackett button</span>
+            </label>
+            <div class="adb-tm-options-row">
+              <button type="button" data-test="jackett">Test Jackett</button>
             </div>
           </section>
 

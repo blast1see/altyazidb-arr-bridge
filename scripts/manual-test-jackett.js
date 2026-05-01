@@ -1,0 +1,193 @@
+/* eslint-disable no-console */
+/**
+ * Manual test helper: replicate exactly what the extension does when you
+ * click the Jackett button on a page with IMDb ID tt17220216.
+ *
+ * Usage:
+ *   node scripts/manual-test-jackett.js                     # uses localhost:9117 + env JACKETT_APIKEY
+ *   node scripts/manual-test-jackett.js <apikey>            # pass key as arg
+ *   node scripts/manual-test-jackett.js <apikey> <baseUrl>  # custom host
+ *
+ * Reports:
+ *   - Jackett server reachability
+ *   - /api/v2.0/indexers/all/results?apikey=...&Query=__adb_ping__ (what "Test Jackett" hits)
+ *   - /api/v2.0/indexers/all/results?apikey=...&Query=tt17220216 (the real search)
+ *   - Top 5 results summarized via the same summarizeJackettRelease() the UI uses
+ */
+"use strict";
+
+const fs = require("fs");
+const path = require("path");
+const http = require("http");
+const https = require("https");
+
+const EXT = path.resolve(__dirname, "..", "altyazidb-arr-bridge-chrome-0.1.1");
+const cfgSrc = fs.readFileSync(path.join(EXT, "src", "config.js"), "utf8");
+const sandbox = { globalThis: {}, console };
+// eslint-disable-next-line no-new-func
+new Function("globalThis", cfgSrc)(sandbox.globalThis);
+const CFG = sandbox.globalThis.AdbArrConfig;
+
+const apikey = process.argv[2] || process.env.JACKETT_APIKEY || "";
+const baseUrl = process.argv[3] || "http://localhost:9117";
+const media = {
+  title: "Monarch: Legacy of Monsters",
+  year: 2023,
+  imdbId: "tt17220216",
+};
+
+if (!apikey) {
+  console.log(
+    "No API key provided. Pass it as the first argument, e.g.:\n" +
+      '  node scripts/manual-test-jackett.js "abc123deadbeef"\n' +
+      "Or set env JACKETT_APIKEY. You can copy it from the Jackett dashboard\n" +
+      "(top-right, under 'API Key').",
+  );
+}
+
+function get(url, timeoutMs = 15000) {
+  return new Promise((resolve, reject) => {
+    const mod = url.startsWith("https") ? https : http;
+    const req = mod.get(url, (res) => {
+      let body = "";
+      res.on("data", (c) => (body += c));
+      res.on("end", () => resolve({ status: res.statusCode, body }));
+    });
+    req.on("error", reject);
+    req.setTimeout(timeoutMs, () => {
+      req.destroy(new Error(`Timeout after ${timeoutMs}ms`));
+    });
+  });
+}
+
+(async () => {
+  console.log("=== Manual Jackett IMDb Search Test ===");
+  console.log("Target :", baseUrl);
+  console.log("Media  :", media.title, `(${media.year})  imdb:${media.imdbId}`);
+  console.log();
+
+  // 1) Reachability
+  console.log("[1/3] Reachability probe");
+  try {
+    const r = await get(baseUrl + "/");
+    console.log("  Jackett UI HTTP", r.status, "- OK");
+  } catch (e) {
+    console.log("  Jackett NOT reachable:", e.message);
+    console.log("  → Start Jackett first, then re-run this script.");
+    process.exit(1);
+  }
+
+  if (!apikey) {
+    console.log("\nSkipping API calls (no key provided).");
+    const plan = CFG.buildSearchPlan("jackett", media);
+    const previewUrl = CFG.buildUrl(baseUrl, plan.apiPath, {
+      apikey: "<YOUR_API_KEY>",
+      ...plan.apiParams,
+    });
+    const dashUrl = CFG.buildJackettSearchPageUrl(baseUrl, plan.term);
+    console.log("\nURLs the extension would produce:");
+    console.log("  search API :", previewUrl);
+    console.log("  dashboard  :", dashUrl);
+    process.exit(0);
+  }
+
+  // 2) Status endpoint (what the fixed "Test Jackett" button hits)
+  console.log(
+    "\n[2/3] Auth/status ping  →  /api/v2.0/indexers/all/results?Query=__adb_ping__",
+  );
+  try {
+    const statusUrl = CFG.buildUrl(
+      baseUrl,
+      "/api/v2.0/indexers/all/results",
+      { apikey, Query: "__adb_ping__" },
+    );
+    const r = await get(statusUrl);
+    console.log("  HTTP", r.status, r.status === 200 ? "(auth OK)" : "");
+    if (r.status === 200) {
+      const j = JSON.parse(r.body);
+      const indexers = Array.isArray(j?.Indexers) ? j.Indexers : [];
+      console.log(`  Reachable indexers: ${indexers.length}`);
+    } else {
+      console.log("  Response body (truncated):", r.body.slice(0, 200));
+    }
+  } catch (e) {
+    console.log("  ERROR:", e.message);
+  }
+
+  // 2b) Invalid key should 401 (proves auth gating works)
+  try {
+    const bad = "0".repeat(32);
+    const badUrl = CFG.buildUrl(
+      baseUrl,
+      "/api/v2.0/indexers/all/results",
+      { apikey: bad, Query: "__adb_ping__" },
+    );
+    const r = await get(badUrl);
+    console.log(
+      "  Invalid-key ping:",
+      r.status,
+      r.status === 401 ? "(rejected, good)" : "(unexpected)",
+    );
+  } catch (e) {
+    console.log("  Invalid-key ping ERROR:", e.message);
+  }
+
+  // 3) The actual IMDb search (matches what the extension does)
+  console.log(
+    "\n[3/3] IMDb search            →  /api/v2.0/indexers/all/results?Query=tt17220216",
+  );
+  const plan = CFG.buildSearchPlan("jackett", media);
+  console.log("  plan.kind   :", plan.kind);
+  console.log("  plan.term   :", plan.term);
+  console.log("  plan.Query  :", plan.apiParams.Query);
+  console.log(
+    "  all terms   :",
+    JSON.stringify(CFG.jackettTerms(media)),
+  );
+
+  const searchUrl = CFG.buildUrl(baseUrl, plan.apiPath, {
+    apikey,
+    ...plan.apiParams,
+  });
+  console.log("  URL         :", searchUrl.replace(apikey, "<KEY>"));
+
+  try {
+    const r = await get(searchUrl, 30000);
+    console.log("  HTTP", r.status);
+    if (r.status !== 200) {
+      console.log("  Body:", r.body.slice(0, 300));
+      process.exit(1);
+    }
+    const data = JSON.parse(r.body);
+    const results = Array.isArray(data?.Results) ? data.Results : [];
+    const indexers = Array.isArray(data?.Indexers) ? data.Indexers : [];
+    console.log(`  Results: ${results.length}  |  Indexers: ${indexers.length}`);
+
+    // Sort by Seeders desc, same as the extension
+    results.sort((a, b) => (b.Seeders || 0) - (a.Seeders || 0));
+
+    const top = results.slice(0, 5).map((r) => CFG.summarizeJackettRelease(r));
+    console.log("\n  Top results (as the popup would show them):");
+    for (const s of top) {
+      console.log(
+        `    • [${s.seeders}S/${s.leechers}L] ${s.indexer} :: ${s.title.slice(0, 90)}`,
+      );
+    }
+
+    // Indexer error diagnostics
+    const errs = indexers.filter((i) => i.Error);
+    if (errs.length) {
+      console.log(`\n  Note: ${errs.length} indexers reported errors:`);
+      for (const i of errs.slice(0, 5)) {
+        console.log(`    - ${i.ID}: ${i.Error}`);
+      }
+    }
+
+    const dashUrl = CFG.buildJackettSearchPageUrl(baseUrl, plan.term);
+    console.log("\n  Dashboard URL (fallback if popup closes):");
+    console.log("   ", dashUrl);
+  } catch (e) {
+    console.log("  ERROR:", e.message);
+    process.exit(1);
+  }
+})();
