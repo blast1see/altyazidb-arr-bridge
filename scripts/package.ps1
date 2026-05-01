@@ -1,16 +1,16 @@
 $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $PSScriptRoot
-$chromeDir = Join-Path $root "altyazidb-arr-bridge-chrome-0.1.0"
-$firefoxDir = Join-Path $root "altyazidb-arr-bridge-firefox-0.1.0"
+$chromeDir = Join-Path $root "altyazidb-arr-bridge-chrome-0.1.1"
+$firefoxDir = Join-Path $root "altyazidb-arr-bridge-firefox-0.1.1"
 $tampermonkeyDir = Join-Path $root "tampermonkey"
 $releaseRoot = Join-Path $root "release"
-$releaseDir = Join-Path $releaseRoot "altyazidb-arr-bridge-complete-0.1.0"
+$releaseDir = Join-Path $releaseRoot "altyazidb-arr-bridge-complete-0.1.1"
 
-$chromeZip = Join-Path $root "altyazidb-arr-bridge-chrome-0.1.0.zip"
-$firefoxZip = Join-Path $root "altyazidb-arr-bridge-firefox-0.1.0.zip"
-$firefoxXpi = Join-Path $root "altyazidb-arr-bridge-firefox-0.1.0.xpi"
-$releaseZip = Join-Path $releaseRoot "altyazidb-arr-bridge-complete-0.1.0.zip"
+$chromeZip = Join-Path $root "altyazidb-arr-bridge-chrome-0.1.1.zip"
+$firefoxZip = Join-Path $root "altyazidb-arr-bridge-firefox-0.1.1.zip"
+$firefoxXpi = Join-Path $root "altyazidb-arr-bridge-firefox-0.1.1.xpi"
+$releaseZip = Join-Path $releaseRoot "altyazidb-arr-bridge-complete-0.1.1.zip"
 
 foreach ($path in @($chromeDir, $firefoxDir, $tampermonkeyDir)) {
   if (-not (Test-Path -LiteralPath $path)) {

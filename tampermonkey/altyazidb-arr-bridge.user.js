@@ -1,12 +1,20 @@
 // ==UserScript==
 // @name         AltyaziDB Arr Bridge
 // @namespace    https://altyazidb.com/
-// @version      0.1.0-tm
-// @description  Adds Radarr, Sonarr, and optional Prowlarr buttons to AltyaziDB pages.
+// @version      0.1.1-tm
+// @description  Adds Radarr, Sonarr, and optional Prowlarr buttons to AltyaziDB subtitle pages.
 // @match        http://altyazidb.com/*
 // @match        http://*.altyazidb.com/*
 // @match        https://altyazidb.com/*
 // @match        https://*.altyazidb.com/*
+// @exclude      *://altyazidb.com/forum/*
+// @exclude      *://*.altyazidb.com/forum/*
+// @exclude      *://altyazidb.com/user/*
+// @exclude      *://*.altyazidb.com/user/*
+// @exclude      *://altyazidb.com/search/*
+// @exclude      *://*.altyazidb.com/search/*
+// @exclude      *://altyazidb.com/admin/*
+// @exclude      *://*.altyazidb.com/admin/*
 // @run-at       document-idle
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -41,6 +49,8 @@
     "#film-tepesi",
     "#dle-content"
   ];
+  const SUBTITLE_PATH_RE = /^\/(?:film|dizi|anime-filmleri|anime-dizileri|animasyon-filmleri|animasyon-dizileri|asya-filmleri|asya-dizileri|belgesel-filmleri|belgesel-dizileri|tv-programlari)\//i;
+  const NON_SUBTITLE_PATH_RE = /^\/(?:forum|user|uploads|engine|index\.php|search|page|lastnews|allnews|tags|stats|statistics|register|login|lostpassword|autobackup|admin|index)(?:\/|$)/i;
 
   const DEFAULT_SETTINGS = {
     radarrBaseUrl: "http://localhost:7878",
@@ -1575,18 +1585,16 @@ async function lookupArr(service, media, settings) {
     return appendProwlarr(["radarr", "sonarr"]);
   }
 
-  function isLikelyDetailPage(media) {
-    if (document.querySelector(DETAIL_SELECTOR)) {
-      return true;
+  function isLikelyDetailPage(_media) {
+    const path = window.location.pathname || "/";
+
+    // Hard block known non-subtitle sections (forum, user profiles, search, etc.)
+    if (NON_SUBTITLE_PATH_RE.test(path)) {
+      return false;
     }
 
-    if (media.imdbId || media.tmdbId || media.tvdbId) {
-      return true;
-    }
-
-    return /\/(?:film|dizi|anime-filmleri|anime-dizileri|animasyon-filmleri|animasyon-dizileri|asya-filmleri|asya-dizileri|belgesel-filmleri|belgesel-dizileri|tv-programlari)\//i.test(
-      window.location.pathname
-    );
+    // Only render on AltyaziDB subtitle detail pages.
+    return SUBTITLE_PATH_RE.test(path);
   }
 
   function mountPoint() {

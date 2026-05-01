@@ -21,6 +21,8 @@
     "#film-tepesi",
     "#dle-content"
   ];
+  const SUBTITLE_PATH_RE = /^\/(?:film|dizi|anime-filmleri|anime-dizileri|animasyon-filmleri|animasyon-dizileri|asya-filmleri|asya-dizileri|belgesel-filmleri|belgesel-dizileri|tv-programlari)\//i;
+  const NON_SUBTITLE_PATH_RE = /^\/(?:forum|user|uploads|engine|index\.php|search|page|lastnews|allnews|tags|stats|statistics|register|login|lostpassword|autobackup|admin|index)(?:\/|$)/i;
 
   function sendMessage(message) {
     if (globalThis.browser?.runtime?.sendMessage) {
@@ -465,18 +467,16 @@
     return appendProwlarr(["radarr", "sonarr"]);
   }
 
-  function isLikelyDetailPage(media) {
-    if (document.querySelector(DETAIL_SELECTOR)) {
-      return true;
+  function isLikelyDetailPage(_media) {
+    const path = window.location.pathname || "/";
+
+    // Hard block known non-subtitle sections (forum, user profiles, search, etc.)
+    if (NON_SUBTITLE_PATH_RE.test(path)) {
+      return false;
     }
 
-    if (media.imdbId || media.tmdbId || media.tvdbId) {
-      return true;
-    }
-
-    return /\/(?:film|dizi|anime-filmleri|anime-dizileri|animasyon-filmleri|animasyon-dizileri|asya-filmleri|asya-dizileri|belgesel-filmleri|belgesel-dizileri|tv-programlari)\//i.test(
-      window.location.pathname
-    );
+    // Only render on AltyaziDB subtitle detail pages.
+    return SUBTITLE_PATH_RE.test(path);
   }
 
   function mountPoint() {

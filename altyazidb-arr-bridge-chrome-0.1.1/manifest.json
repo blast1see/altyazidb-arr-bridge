@@ -1,7 +1,7 @@
 {
-  "manifest_version": 2,
+  "manifest_version": 3,
   "name": "AltyaziDB Arr Bridge",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Adds Radarr and Sonarr lookup buttons to AltyaziDB subtitle pages.",
   "icons": {
     "16": "assets/icon-16.png",
@@ -9,7 +9,7 @@
     "48": "assets/icon-48.png",
     "128": "assets/icon-128.png"
   },
-  "browser_action": {
+  "action": {
     "default_title": "AltyaziDB Arr Bridge",
     "default_icon": {
       "16": "assets/icon-16.png",
@@ -20,7 +20,9 @@
   },
   "permissions": [
     "storage",
-    "tabs",
+    "tabs"
+  ],
+  "host_permissions": [
     "http://altyazidb.com/*",
     "http://*.altyazidb.com/*",
     "https://altyazidb.com/*",
@@ -32,12 +34,12 @@
     "http://localhost:9696/*",
     "http://127.0.0.1:9696/*"
   ],
+  "optional_host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
   "background": {
-    "scripts": [
-      "src/config.js",
-      "src/background.js"
-    ],
-    "persistent": false
+    "service_worker": "src/background.js"
   },
   "options_page": "options.html",
   "content_scripts": [
@@ -47,6 +49,16 @@
         "http://*.altyazidb.com/*",
         "https://altyazidb.com/*",
         "https://*.altyazidb.com/*"
+      ],
+      "exclude_matches": [
+        "*://altyazidb.com/forum/*",
+        "*://*.altyazidb.com/forum/*",
+        "*://altyazidb.com/user/*",
+        "*://*.altyazidb.com/user/*",
+        "*://altyazidb.com/search/*",
+        "*://*.altyazidb.com/search/*",
+        "*://altyazidb.com/admin/*",
+        "*://*.altyazidb.com/admin/*"
       ],
       "js": [
         "src/config.js",
@@ -59,18 +71,18 @@
     }
   ],
   "web_accessible_resources": [
-    "assets/radarr-reference.png",
-    "assets/sonarr-reference.png",
-    "assets/prowlarr-reference.png"
-  ],
-  "browser_specific_settings": {
-    "gecko": {
-      "id": "altyazidb-arr-bridge@example.local",
-      "data_collection_permissions": {
-        "required": [
-          "none"
-        ]
-      }
+    {
+      "resources": [
+        "assets/radarr-reference.png",
+        "assets/sonarr-reference.png",
+        "assets/prowlarr-reference.png"
+      ],
+      "matches": [
+        "http://altyazidb.com/*",
+        "http://*.altyazidb.com/*",
+        "https://altyazidb.com/*",
+        "https://*.altyazidb.com/*"
+      ]
     }
-  }
+  ]
 }

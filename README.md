@@ -20,8 +20,8 @@
 ### Proje Yapısı
 
 ```text
-altyazidb-arr-bridge-chrome-0.1.0/   Chrome / Chromium / Zen / Brave / Edge eklenti kaynağı
-altyazidb-arr-bridge-firefox-0.1.0/  Firefox eklenti kaynağı
+altyazidb-arr-bridge-chrome-0.1.1/   Chrome / Chromium / Zen / Brave / Edge eklenti kaynağı
+altyazidb-arr-bridge-firefox-0.1.1/  Firefox eklenti kaynağı
 tampermonkey/                        Tampermonkey userscript kaynağı
 scripts/package.ps1                  Zip / XPI / release arşivi oluşturma scripti
 OPTIMIZATIONS.md                     Optimizasyon denetimi
@@ -99,7 +99,7 @@ Prowlarr:
 1. `chrome://extensions` adresini aç.
 2. `Developer mode` seçeneğini aç.
 3. `Load unpacked` butonuna bas.
-4. `altyazidb-arr-bridge-chrome-0.1.0` klasörünü seç.
+4. `altyazidb-arr-bridge-chrome-0.1.1` klasörünü seç.
 5. Eklenti detaylarından `Extension options` sayfasını aç.
 6. URL ve API ayarlarını kontrol et.
 
@@ -108,7 +108,7 @@ Prowlarr:
 1. `about:debugging#/runtime/this-firefox` adresini aç.
 2. `This Firefox` bölümüne gir.
 3. `Load Temporary Add-on` seç.
-4. `altyazidb-arr-bridge-firefox-0.1.0/manifest.json` dosyasını seç.
+4. `altyazidb-arr-bridge-firefox-0.1.1/manifest.json` dosyasını seç.
 
 Not: İmzasız yerel XPI dosyaları normal Firefox'ta kalıcı kurulum için Mozilla imzası isteyebilir. Test için `about:debugging` en sorunsuz yoldur.
 
@@ -134,10 +134,10 @@ PowerShell ile:
 
 Bu komut şunları üretir:
 
-- `altyazidb-arr-bridge-chrome-0.1.0.zip`
-- `altyazidb-arr-bridge-firefox-0.1.0.zip`
-- `altyazidb-arr-bridge-firefox-0.1.0.xpi`
-- `release/altyazidb-arr-bridge-complete-0.1.0.zip`
+- `altyazidb-arr-bridge-chrome-0.1.1.zip`
+- `altyazidb-arr-bridge-firefox-0.1.1.zip`
+- `altyazidb-arr-bridge-firefox-0.1.1.xpi`
+- `release/altyazidb-arr-bridge-complete-0.1.1.zip`
 
 ### Test
 
@@ -179,8 +179,8 @@ MIT. Ayrıntılar için `LICENSE` dosyasına bak.
 ### Repository Structure
 
 ```text
-altyazidb-arr-bridge-chrome-0.1.0/   Chrome / Chromium / Zen / Brave / Edge extension source
-altyazidb-arr-bridge-firefox-0.1.0/  Firefox extension source
+altyazidb-arr-bridge-chrome-0.1.1/   Chrome / Chromium / Zen / Brave / Edge extension source
+altyazidb-arr-bridge-firefox-0.1.1/  Firefox extension source
 tampermonkey/                        Tampermonkey userscript source
 scripts/package.ps1                  Zip / XPI / release archive packaging script
 OPTIMIZATIONS.md                     Optimization audit
@@ -258,7 +258,7 @@ Prowlarr:
 1. Open `chrome://extensions`.
 2. Enable `Developer mode`.
 3. Click `Load unpacked`.
-4. Select `altyazidb-arr-bridge-chrome-0.1.0`.
+4. Select `altyazidb-arr-bridge-chrome-0.1.1`.
 5. Open the extension details and then `Extension options`.
 6. Confirm or edit URLs and API settings.
 
@@ -267,7 +267,7 @@ Prowlarr:
 1. Open `about:debugging#/runtime/this-firefox`.
 2. Click `This Firefox`.
 3. Click `Load Temporary Add-on`.
-4. Select `altyazidb-arr-bridge-firefox-0.1.0/manifest.json`.
+4. Select `altyazidb-arr-bridge-firefox-0.1.1/manifest.json`.
 
 Note: Unsigned local XPI files may require Mozilla signing for permanent installation in regular Firefox. `about:debugging` is the easiest local test path.
 
@@ -293,10 +293,10 @@ Run from PowerShell:
 
 This creates:
 
-- `altyazidb-arr-bridge-chrome-0.1.0.zip`
-- `altyazidb-arr-bridge-firefox-0.1.0.zip`
-- `altyazidb-arr-bridge-firefox-0.1.0.xpi`
-- `release/altyazidb-arr-bridge-complete-0.1.0.zip`
+- `altyazidb-arr-bridge-chrome-0.1.1.zip`
+- `altyazidb-arr-bridge-firefox-0.1.1.zip`
+- `altyazidb-arr-bridge-firefox-0.1.1.xpi`
+- `release/altyazidb-arr-bridge-complete-0.1.1.zip`
 
 ### Testing
 
