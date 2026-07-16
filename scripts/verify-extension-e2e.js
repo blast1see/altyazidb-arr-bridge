@@ -1,6 +1,6 @@
 /* eslint-disable no-console */
 /**
- * End-to-end verification for AltyaziDB Arr Bridge v0.1.1.
+ * End-to-end verification for AltyaziDB Arr Bridge v0.1.4.
  * Launches system Chrome with the unpacked extension loaded, visits
  * forum + subtitle URLs, and reports button/shell state.
  *
@@ -225,7 +225,7 @@ async function waitForInjection(page, timeoutMs = 30000) {
       }
       const screenshot = path.join(
         OUT_DIR,
-        `e2e_v011_${target.label}.png`,
+        `e2e_v014_${target.label}.png`,
       );
       try {
         await page.screenshot({ path: screenshot, fullPage: true });

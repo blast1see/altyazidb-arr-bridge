@@ -1,0 +1,57 @@
+[
+  {
+    "name": "Industry series page",
+    "pathname": "/dizi/9084-industry.html",
+    "title": "Industry - AltyaziDB",
+    "subtitleTableNoise": "Industry.S01E04.1080p.WEB-DL",
+    "expected": {
+      "mediaType": "series",
+      "seasonNumber": null,
+      "episodeNumber": null
+    }
+  },
+  {
+    "name": "The Boys series page",
+    "pathname": "/dizi/186-the-boys.html",
+    "title": "The Boys - AltyaziDB",
+    "subtitleTableNoise": "The.Boys.S05E08.2160p.WEB-DL",
+    "expected": {
+      "mediaType": "series",
+      "seasonNumber": null,
+      "episodeNumber": null
+    }
+  },
+  {
+    "name": "Movie page",
+    "pathname": "/film/90-sihirbazlar-etesi-daha-bir-ey-grmediniz.html",
+    "title": "Sihirbazlar Çetesi: Daha Bir Şey Görmediniz - AltyaziDB",
+    "subtitleTableNoise": "Now.You.See.Me.2.2016.1080p",
+    "expected": {
+      "mediaType": "movie",
+      "seasonNumber": null,
+      "episodeNumber": null
+    }
+  },
+  {
+    "name": "Anime series page",
+    "pathname": "/anime-dizileri/123-one-piece.html",
+    "title": "One Piece - AltyaziDB",
+    "subtitleTableNoise": "One.Piece.S01E04",
+    "expected": {
+      "mediaType": "anime",
+      "seasonNumber": null,
+      "episodeNumber": null
+    }
+  },
+  {
+    "name": "Explicit episode title",
+    "pathname": "/dizi/186-the-boys.html",
+    "title": "The Boys S05E08 - AltyaziDB",
+    "subtitleTableNoise": "",
+    "expected": {
+      "mediaType": "episode",
+      "seasonNumber": 5,
+      "episodeNumber": 8
+    }
+  }
+]

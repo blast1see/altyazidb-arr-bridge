@@ -1,4 +1,4 @@
-// Verifies the v0.1.1 isLikelyDetailPage() URL gating against real AltyaziDB URLs.
+// Verifies the v0.1.4 isLikelyDetailPage() URL gating against real AltyaziDB URLs.
 const SUBTITLE_PATH_RE =
   /^\/(?:film|dizi|anime-filmleri|anime-dizileri|animasyon-filmleri|animasyon-dizileri|asya-filmleri|asya-dizileri|belgesel-filmleri|belgesel-dizileri|tv-programlari)\//i;
 const NON_SUBTITLE_PATH_RE =

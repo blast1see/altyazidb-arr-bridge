@@ -58,7 +58,39 @@
       parsed.search = "";
       return parsed.toString().replace(/\/+$/, "");
     } catch (_error) {
-      return normalizeSpace(fallback || "");
+      return raw;
+    }
+  }
+
+  function hostPermissionPattern(baseUrl) {
+    try {
+      const parsed = new URL(normalizeBaseUrl(baseUrl, baseUrl));
+
+      if (!["http:", "https:"].includes(parsed.protocol)) {
+        return "";
+      }
+
+      return `${parsed.protocol}//${parsed.hostname}/*`;
+    } catch (_error) {
+      return "";
+    }
+  }
+
+  function safeHttpUrl(value) {
+    try {
+      const parsed = new URL(normalizeSpace(value));
+
+      if (!["http:", "https:"].includes(parsed.protocol)) {
+        return "";
+      }
+
+      if (parsed.username || parsed.password) {
+        return "";
+      }
+
+      return parsed.toString();
+    } catch (_error) {
+      return "";
     }
   }
 
@@ -144,6 +176,105 @@
     }
 
     return titles;
+  }
+
+  function detectSeasonEpisode(pathname, pageTitle) {
+    let decodedPath = String(pathname || "");
+
+    try {
+      decodedPath = decodeURIComponent(decodedPath);
+    } catch (_error) {
+      // Keep the original path when it contains malformed escape sequences.
+    }
+
+    const signal = normalizeSpace(
+      `${decodedPath.replace(/[\/_.-]+/g, " ")} ${pageTitle || ""}`
+    );
+    const compact = signal.match(
+      /\bS(?:eason)?\s*0?(\d{1,2})\s*(?:E|Ep|Episode|B[o\u00f6]l[u\u00fc]m|x)\s*0?(\d{1,3})\b/i
+    );
+    const xFormat = signal.match(/\b(\d{1,2})\s*[xX]\s*(\d{1,3})\b/);
+    const namedPair =
+      signal.match(/\b(?:Season|Sezon)\s*0?(\d{1,2})\D{0,20}(?:Episode|B[o\u00f6]l[u\u00fc]m)\s*0?(\d{1,3})\b/i) ||
+      signal.match(/\b0?(\d{1,2})\.\s*(?:Season|Sezon)\D{0,20}0?(\d{1,3})\.\s*(?:Episode|B[o\u00f6]l[u\u00fc]m)\b/i);
+    const seasonText =
+      signal.match(/\b(?:Season|Sezon)\s*0?(\d{1,2})\b/i) ||
+      signal.match(/\b0?(\d{1,2})\.\s*(?:Season|Sezon)\b/i);
+    const episodeText =
+      signal.match(/\b(?:Episode|B[o\u00f6]l[u\u00fc]m)\s*0?(\d{1,3})\b/i) ||
+      signal.match(/\b0?(\d{1,3})\.\s*(?:Episode|B[o\u00f6]l[u\u00fc]m)\b/i);
+
+    if (compact || xFormat || namedPair) {
+      const match = compact || xFormat || namedPair;
+      return {
+        seasonNumber: Number(match[1]),
+        episodeNumber: Number(match[2])
+      };
+    }
+
+    return {
+      seasonNumber: seasonText ? Number(seasonText[1]) : null,
+      episodeNumber: episodeText ? Number(episodeText[1]) : null
+    };
+  }
+
+  function detectMediaType({
+    pathname = "",
+    breadcrumbs = "",
+    schemaTypes = "",
+    tmdbType = "",
+    seasonNumber = null,
+    episodeNumber = null
+  } = {}) {
+    const path = String(pathname || "").toLowerCase();
+    const breadcrumbText = String(breadcrumbs || "").toLowerCase();
+    const schemaText = String(schemaTypes || "").toLowerCase();
+
+    if (/\/(?:film|anime-filmleri|animasyon-filmleri|asya-filmleri|belgesel-filmleri)\//.test(path)) {
+      return "movie";
+    }
+
+    if (/\/anime-dizileri\//.test(path) || /\banime diz/i.test(breadcrumbText)) {
+      return "anime";
+    }
+
+    if (/\/(?:dizi|animasyon-dizileri|asya-dizileri|belgesel-dizileri|tv-programlari)\//.test(path)) {
+      if (episodeNumber) {
+        return "episode";
+      }
+
+      if (seasonNumber) {
+        return "season";
+      }
+
+      return "series";
+    }
+
+    if (/\bfilm\b|movie/.test(breadcrumbText) || /\bmovie\b/.test(schemaText) || tmdbType === "movie") {
+      return "movie";
+    }
+
+    if (/\bdizi\b|\bseries\b|\btv\b/.test(breadcrumbText) || /tvseries/.test(schemaText) || tmdbType === "tv") {
+      if (episodeNumber) {
+        return "episode";
+      }
+
+      if (seasonNumber) {
+        return "season";
+      }
+
+      return "series";
+    }
+
+    if (episodeNumber) {
+      return "episode";
+    }
+
+    if (seasonNumber) {
+      return "season";
+    }
+
+    return "unknown";
   }
 
   function mergeSettings(settings) {
@@ -526,9 +657,13 @@
     stripArrSuffix,
     normalizeSpace,
     normalizeBaseUrl,
+    hostPermissionPattern,
+    safeHttpUrl,
     mergeSettings,
     cleanReleaseSearchTitle,
     uniqueSearchTitles,
+    detectSeasonEpisode,
+    detectMediaType,
     getSearchTitle,
     titleYearTerm,
     prowlarrTerms,

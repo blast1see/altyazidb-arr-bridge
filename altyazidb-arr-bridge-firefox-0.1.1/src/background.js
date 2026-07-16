@@ -6,6 +6,7 @@ const CFG = globalThis.AdbArrConfig;
 const runtimeApi = globalThis.browser?.runtime || globalThis.chrome?.runtime;
 const storageApi = globalThis.browser?.storage || globalThis.chrome?.storage;
 const tabsApi = globalThis.browser?.tabs || globalThis.chrome?.tabs;
+const permissionsApi = globalThis.browser?.permissions || globalThis.chrome?.permissions;
 
 class ArrBridgeError extends Error {
   constructor(code, message) {
@@ -65,26 +66,41 @@ function serviceLabel(service) {
 function connectionErrorMessage(service, baseUrl) {
   const label = serviceLabel(service);
   return CFG.isLocalhostUrl(baseUrl)
-    ? `Could not connect to localhost ${label}`
-    : `Could not connect to ${label}`;
+    ? `Could not connect to localhost ${label}. Check that the service is running and the URL and port are correct.`
+    : `Could not connect to ${label}. Check the URL, network, TLS certificate, and extension host permission.`;
 }
 
-// Firefox/Zen strictly enforce CORS even from extension contexts when the
-// target server omits Access-Control-Allow-Origin. Jackett ships with
-// AllowCORS=false by default, so this specific failure mode needs a
-// distinct, actionable error surface so users don't chase phantom network issues.
-function isLikelyCorsError(err) {
-  if (!err) return false;
-  const name = String(err.name || "");
-  const msg = String(err.message || "");
-  if (name !== "TypeError") return false;
-  return /NetworkError when attempting to fetch|Failed to fetch|CORS|Access-Control-Allow-Origin/i.test(msg);
+function permissionContains(origins) {
+  if (!permissionsApi || !origins.length) {
+    return Promise.resolve(true);
+  }
+
+  if (usingPromiseBrowserApi()) {
+    return permissionsApi.contains({ origins });
+  }
+
+  return new Promise((resolve) => {
+    permissionsApi.contains({ origins }, (allowed) => resolve(Boolean(allowed)));
+  });
 }
 
 function fetchFailureMessage(service, baseUrl, err) {
-  if (isLikelyCorsError(err) && service === "jackett") {
-    return "Jackett blocked by CORS. Open http://127.0.0.1:9117 → Configure Jackett → check 'CORS' (Allow CORS) → Apply Server Settings, then retry.";
+  const label = serviceLabel(service);
+  const name = String(err?.name || "");
+  const message = String(err?.message || "");
+
+  if (name === "AbortError" || /timed?\s*out|timeout/i.test(message)) {
+    return `${label} request timed out. Check the service load and network path.`;
   }
+
+  if (/certificate|cert_authority|ssl|tls|secure connection/i.test(message)) {
+    return `${label} TLS/certificate validation failed. Fix or trust the certificate, then retry.`;
+  }
+
+  if (/invalid url|failed to construct|url is malformed/i.test(message)) {
+    return `${label} URL is invalid. Check the configured protocol, host, and port.`;
+  }
+
   return connectionErrorMessage(service, baseUrl);
 }
 
@@ -94,13 +110,9 @@ function statusPath(service) {
   }
 
   if (service === "jackett") {
-    // `/api/v2.0/server/config` requires cookie-based admin auth and 302-redirects
-    // when authenticated with ?apikey=, so the status ping would hit the login page.
-    // `/api/v2.0/indexers/all/results` honours ?apikey= (200 on valid, 401 on invalid).
-    // A nonsense Query keeps the response small and avoids triggering real indexer searches.
     return {
-      path: "/api/v2.0/indexers/all/results",
-      params: { Query: "__adb_ping__" }
+      path: "/api/v2.0/indexers/all/results/torznab/api",
+      params: { t: "caps" }
     };
   }
 
@@ -108,18 +120,22 @@ function statusPath(service) {
 }
 
 function fallbackUrlForService(service, settings, searchPlan) {
-  const baseUrl = CFG.serviceBaseUrl(settings, service);
-  const term = searchPlan.fallbackTerm || searchPlan.term;
+  try {
+    const baseUrl = CFG.serviceBaseUrl(settings, service);
+    const term = searchPlan.fallbackTerm || searchPlan.term;
 
-  if (service === "prowlarr") {
-    return CFG.buildProwlarrSearchPageUrl(baseUrl, term, settings.prowlarrLimit);
+    if (service === "prowlarr") {
+      return CFG.buildProwlarrSearchPageUrl(baseUrl, term, settings.prowlarrLimit);
+    }
+
+    if (service === "jackett") {
+      return CFG.buildJackettSearchPageUrl(baseUrl, term);
+    }
+
+    return CFG.buildAddPageUrl(baseUrl, term);
+  } catch (_error) {
+    return "";
   }
-
-  if (service === "jackett") {
-    return CFG.buildJackettSearchPageUrl(baseUrl, term);
-  }
-
-  return CFG.buildAddPageUrl(baseUrl, term);
 }
 
 async function fetchWithTimeout(url, options, timeoutMs = 10000) {
@@ -144,6 +160,22 @@ async function callArrApi(service, settings, path, params = {}, options = {}) {
 
   if (requireKey && !apiKey) {
     throw new ArrBridgeError("missingKey", `${label} API key missing`);
+  }
+
+  const hostPattern = CFG.hostPermissionPattern(baseUrl);
+
+  if (!hostPattern) {
+    throw new ArrBridgeError(
+      "invalidUrl",
+      `${label} URL is invalid. Check the configured protocol, host, and port.`
+    );
+  }
+
+  if (!(await permissionContains([hostPattern]))) {
+    throw new ArrBridgeError(
+      "permission",
+      `${label} host permission is missing for ${hostPattern}. Open the extension settings and grant access before retrying.`
+    );
   }
 
   // Jackett authenticates via ?apikey= query parameter rather than X-Api-Key header.
@@ -320,14 +352,19 @@ async function lookupArr(service, media, settings) {
   const fallbackUrl = fallbackUrlForService(service, settings, searchPlan);
 
   if (!CFG.serviceApiKey(settings, service)) {
-    await createTab(fallbackUrl);
+    if (fallbackUrl) {
+      await createTab(fallbackUrl);
+    }
+
     return {
       ok: false,
       service,
       error: `${serviceLabel(service)} API key missing`,
       fallbackUrl,
-      opened: true,
-      message: `${serviceLabel(service)} API key missing. Opened browser search fallback.`
+      opened: Boolean(fallbackUrl),
+      message: fallbackUrl
+        ? `${serviceLabel(service)} API key missing. Opened browser search fallback.`
+        : `${serviceLabel(service)} API key missing and the configured URL is invalid.`
     };
   }
 
@@ -433,14 +470,19 @@ async function lookupProwlarr(media, settings) {
   const fallbackUrl = fallbackUrlForService("prowlarr", settings, plans[0]);
 
   if (!CFG.serviceApiKey(settings, "prowlarr")) {
-    await createTab(fallbackUrl);
+    if (fallbackUrl) {
+      await createTab(fallbackUrl);
+    }
+
     return {
       ok: false,
       service: "prowlarr",
       error: "Prowlarr API key missing",
       fallbackUrl,
-      opened: true,
-      message: "Prowlarr API key missing. Opened browser search fallback."
+      opened: Boolean(fallbackUrl),
+      message: fallbackUrl
+        ? "Prowlarr API key missing. Opened browser search fallback."
+        : "Prowlarr API key missing and the configured URL is invalid."
     };
   }
 
@@ -462,6 +504,8 @@ async function lookupProwlarr(media, settings) {
     }
   }
 
+  const activeFallbackUrl = fallbackUrlForService("prowlarr", settings, activePlan);
+
   if (!releases.length) {
     return {
       ok: false,
@@ -478,18 +522,21 @@ async function lookupProwlarr(media, settings) {
       service: "prowlarr",
       mode: "showPopupResults",
       searchTerm: activePlan.term,
-      fallbackUrl,
-      results: releases.slice(0, 8).map(CFG.summarizeRelease)
+      fallbackUrl: activeFallbackUrl,
+      results: releases.slice(0, 8).map((result) => ({
+        ...CFG.summarizeRelease(result),
+        searchTerm: activePlan.term
+      }))
     };
   }
 
-  await createTab(fallbackUrl);
+  await createTab(activeFallbackUrl);
 
   return {
     ok: true,
     service: "prowlarr",
     opened: true,
-    openedUrl: fallbackUrl,
+    openedUrl: activeFallbackUrl,
     message: "Opened Prowlarr search."
   };
 }
@@ -509,14 +556,19 @@ async function lookupJackett(media, settings) {
   const fallbackUrl = fallbackUrlForService("jackett", settings, plans[0]);
 
   if (!CFG.serviceApiKey(settings, "jackett")) {
-    await createTab(fallbackUrl);
+    if (fallbackUrl) {
+      await createTab(fallbackUrl);
+    }
+
     return {
       ok: false,
       service: "jackett",
       error: "Jackett API key missing",
       fallbackUrl,
-      opened: true,
-      message: "Jackett API key missing. Opened Jackett search fallback."
+      opened: Boolean(fallbackUrl),
+      message: fallbackUrl
+        ? "Jackett API key missing. Opened Jackett search fallback."
+        : "Jackett API key missing and the configured URL is invalid."
     };
   }
 
@@ -547,6 +599,8 @@ async function lookupJackett(media, settings) {
     }
   }
 
+  const activeFallbackUrl = fallbackUrlForService("jackett", settings, activePlan);
+
   if (!releases.length) {
     return {
       ok: false,
@@ -566,18 +620,21 @@ async function lookupJackett(media, settings) {
       service: "jackett",
       mode: "showPopupResults",
       searchTerm: activePlan.term,
-      fallbackUrl,
-      results: releases.slice(0, 8).map(CFG.summarizeJackettRelease)
+      fallbackUrl: activeFallbackUrl,
+      results: releases.slice(0, settings.jackettLimit).map((result) => ({
+        ...CFG.summarizeJackettRelease(result),
+        searchTerm: activePlan.term
+      }))
     };
   }
 
-  await createTab(fallbackUrl);
+  await createTab(activeFallbackUrl);
 
   return {
     ok: true,
     service: "jackett",
     opened: true,
-    openedUrl: fallbackUrl,
+    openedUrl: activeFallbackUrl,
     message: "Opened Jackett search."
   };
 }
@@ -691,23 +748,31 @@ async function openResult(message) {
   const media = message.media || {};
   const searchPlan = CFG.buildSearchPlan(service, media);
 
-  if (service === "prowlarr") {
-    const url = CFG.buildProwlarrSearchPageUrl(
-      CFG.serviceBaseUrl(settings, service),
-      searchPlan.fallbackTerm || searchPlan.term,
-      settings.prowlarrLimit
+  if (service === "prowlarr" || service === "jackett") {
+    const infoUrl = CFG.safeHttpUrl(result.infoUrl);
+
+    if (infoUrl) {
+      await createTab(infoUrl);
+      return { ok: true, openedUrl: infoUrl };
+    }
+
+    const term = CFG.normalizeSpace(
+      result.searchTerm ||
+      message.searchTerm ||
+      result.title ||
+      searchPlan.fallbackTerm ||
+      searchPlan.term
     );
-
-    await createTab(url);
-    return { ok: true, openedUrl: url };
-  }
-
-  if (service === "jackett") {
-    const url = CFG.buildJackettSearchPageUrl(
-      CFG.serviceBaseUrl(settings, service),
-      searchPlan.fallbackTerm || searchPlan.term
-    );
-
+    const url = service === "prowlarr"
+      ? CFG.buildProwlarrSearchPageUrl(
+        CFG.serviceBaseUrl(settings, service),
+        term,
+        settings.prowlarrLimit
+      )
+      : CFG.buildJackettSearchPageUrl(
+        CFG.serviceBaseUrl(settings, service),
+        term
+      );
     await createTab(url);
     return { ok: true, openedUrl: url };
   }
