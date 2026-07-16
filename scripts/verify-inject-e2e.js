@@ -1,6 +1,6 @@
 /* eslint-disable no-console */
 /**
- * Alternative E2E: inject the v0.1.1 content script INTO the page with
+ * Alternative E2E: inject the v0.1.4 content script INTO the page with
  * stubbed chrome/browser API so we can verify the code works on live DOM
  * without relying on Chrome's --load-extension flag (which is blocked by
  * policy in newer Chrome versions).
@@ -140,7 +140,7 @@ async function waitForShell(page, ms = 30000) {
   );
   const browser = await puppeteer.launch({
     executablePath: chromePath,
-    headless: "new",
+    headless: true,
     defaultViewport: { width: 1366, height: 900 },
     userDataDir,
     args: ["--no-sandbox", "--no-first-run", "--no-default-browser-check"],
@@ -169,7 +169,7 @@ async function waitForShell(page, ms = 30000) {
         console.log("  goto warning:", e.message);
       }
 
-      // Inject v0.1.1 content.js into the page
+      // Inject v0.1.4 content.js into the page
       const injectRes = await page.evaluate(
         (bootstrap, cfg, content, css) => {
           // eslint-disable-next-line no-eval
@@ -191,7 +191,7 @@ async function waitForShell(page, ms = 30000) {
 
       const screenshot = path.join(
         OUT_DIR,
-        `inject_v011_${target.label}.png`,
+        `inject_v014_${target.label}.png`,
       );
       try {
         await page.screenshot({ path: screenshot, fullPage: false });

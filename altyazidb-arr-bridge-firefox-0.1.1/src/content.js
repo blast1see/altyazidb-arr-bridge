@@ -293,89 +293,22 @@
     return ids;
   }
 
-  function detectSeasonEpisode(snapshot) {
-    const body = allPageText(snapshot);
-    const compact = body.match(/\bS(?:eason)?\s*0?(\d{1,2})\s*(?:E|Ep|Episode|B[o\u00f6]l[u\u00fc]m|x)\s*0?(\d{1,3})\b/i);
-    const xFormat = body.match(/\b(\d{1,2})\s*[xX]\s*(\d{1,3})\b/);
-    const seasonText =
-      body.match(/\b(?:Season|Sezon)\s*0?(\d{1,2})\b/i) ||
-      body.match(/\b0?(\d{1,2})\.\s*(?:Season|Sezon)\b/i);
-    const episodeText =
-      body.match(/\b(?:Episode|B[o\u00f6]l[u\u00fc]m)\s*0?(\d{1,3})\b/i) ||
-      body.match(/\b0?(\d{1,3})\.\s*(?:Episode|B[o\u00f6]l[u\u00fc]m)\b/i);
-
-    if (compact) {
-      return {
-        seasonNumber: Number(compact[1]),
-        episodeNumber: Number(compact[2])
-      };
-    }
-
-    if (xFormat) {
-      return {
-        seasonNumber: Number(xFormat[1]),
-        episodeNumber: Number(xFormat[2])
-      };
-    }
-
-    return {
-      seasonNumber: seasonText ? Number(seasonText[1]) : null,
-      episodeNumber: episodeText ? Number(episodeText[1]) : null
-    };
+  function detectSeasonEpisode(rawTitle) {
+    return CFG.detectSeasonEpisode(window.location.pathname, rawTitle);
   }
 
   function detectType(signals, ids, seasonEpisode) {
-    const path = window.location.pathname.toLowerCase();
     const breadcrumbs = [...signals.breadcrumbNames, ...signals.breadcrumbUrls]
-      .join(" ")
-      .toLowerCase();
-    const schemaTypes = signals.schemaTypes.join(" ").toLowerCase();
+      .join(" ");
 
-    if (/\/(?:film|anime-filmleri|animasyon-filmleri|asya-filmleri|belgesel-filmleri)\//.test(path)) {
-      return "movie";
-    }
-
-    if (/\/anime-dizileri\//.test(path) || /\banime diz/i.test(breadcrumbs)) {
-      return "anime";
-    }
-
-    if (/\/(?:dizi|animasyon-dizileri|asya-dizileri|belgesel-dizileri|tv-programlari)\//.test(path)) {
-      if (seasonEpisode.episodeNumber) {
-        return "episode";
-      }
-
-      if (seasonEpisode.seasonNumber) {
-        return "season";
-      }
-
-      return "series";
-    }
-
-    if (/\bfilm\b|movie/.test(breadcrumbs) || /\bmovie\b/.test(schemaTypes) || ids.tmdbType === "movie") {
-      return "movie";
-    }
-
-    if (/\bdizi\b|\bseries\b|\btv\b/.test(breadcrumbs) || /tvseries/.test(schemaTypes) || ids.tmdbType === "tv") {
-      if (seasonEpisode.episodeNumber) {
-        return "episode";
-      }
-
-      if (seasonEpisode.seasonNumber) {
-        return "season";
-      }
-
-      return "series";
-    }
-
-    if (seasonEpisode.episodeNumber) {
-      return "episode";
-    }
-
-    if (seasonEpisode.seasonNumber) {
-      return "season";
-    }
-
-    return "unknown";
+    return CFG.detectMediaType({
+      pathname: window.location.pathname,
+      breadcrumbs,
+      schemaTypes: signals.schemaTypes.join(" "),
+      tmdbType: ids.tmdbType,
+      seasonNumber: seasonEpisode.seasonNumber,
+      episodeNumber: seasonEpisode.episodeNumber
+    });
   }
 
   function extractReleaseTitles(year) {
@@ -415,13 +348,13 @@
     const snapshot = createPageSnapshot();
     const signals = jsonLdSignals(snapshot.jsonLd);
     const ids = extractIdsFromLinks(snapshot);
-    const seasonEpisode = detectSeasonEpisode(snapshot);
     const rawTitle =
       text(".v2-detail-title") ||
       text("h1") ||
       meta('meta[property="og:title"]') ||
       meta('meta[property="twitter:title"]') ||
       document.title;
+    const seasonEpisode = detectSeasonEpisode(rawTitle);
     const title = stripSiteTitle(rawTitle);
     const originalTitle =
       labelValue(/orijinal ba\u015fl\u0131k|original title|original name/i) || title;
@@ -674,7 +607,8 @@
             type: "ADB_OPEN_RESULT",
             service,
             media,
-            result
+            result,
+            searchTerm: response.searchTerm || ""
           });
 
           setStatus(
