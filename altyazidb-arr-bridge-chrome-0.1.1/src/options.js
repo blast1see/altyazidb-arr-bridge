@@ -147,11 +147,7 @@
   }
 
   function originPattern(baseUrl) {
-    try {
-      return `${new URL(CFG.normalizeBaseUrl(baseUrl, baseUrl)).origin}/*`;
-    } catch (_error) {
-      return "";
-    }
+    return CFG.hostPermissionPattern(baseUrl);
   }
 
   function permissionContains(origins) {
@@ -184,14 +180,8 @@
 
   async function requestHostPermissions(settings) {
     const defaultOrigins = new Set([
-      "http://localhost:7878/*",
-      "http://127.0.0.1:7878/*",
-      "http://localhost:8989/*",
-      "http://127.0.0.1:8989/*",
-      "http://localhost:9696/*",
-      "http://127.0.0.1:9696/*",
-      "http://localhost:9117/*",
-      "http://127.0.0.1:9117/*"
+      "http://localhost/*",
+      "http://127.0.0.1/*"
     ]);
     const origins = [
       originPattern(settings.radarrBaseUrl),
@@ -250,7 +240,13 @@
 
     try {
       const settings = readForm();
-      await requestHostPermissions(settings);
+      const granted = await requestHostPermissions(settings);
+
+      if (!granted) {
+        setStatus("Host permission was not granted. No connection request was sent.", "error");
+        return;
+      }
+
       await storageSet(settings);
       const response = await sendMessage({
         type: "ADB_LOAD_CHOICES",
@@ -280,7 +276,13 @@
 
     try {
       const settings = readForm();
-      await requestHostPermissions(settings);
+      const granted = await requestHostPermissions(settings);
+
+      if (!granted) {
+        setStatus(`${label} host permission was not granted. No connection request was sent.`, "error");
+        return;
+      }
+
       await storageSet(settings);
       const response = await sendMessage({
         type: "ADB_TEST_CONNECTION",

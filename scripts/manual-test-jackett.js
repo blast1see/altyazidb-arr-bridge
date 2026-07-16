@@ -10,7 +10,7 @@
  *
  * Reports:
  *   - Jackett server reachability
- *   - /api/v2.0/indexers/all/results?apikey=...&Query=__adb_ping__ (what "Test Jackett" hits)
+ *   - /api/v2.0/indexers/all/results/torznab/api?apikey=...&t=caps (what "Test Jackett" hits)
  *   - /api/v2.0/indexers/all/results?apikey=...&Query=tt17220216 (the real search)
  *   - Top 5 results summarized via the same summarizeJackettRelease() the UI uses
  */
@@ -93,20 +93,18 @@ function get(url, timeoutMs = 15000) {
 
   // 2) Status endpoint (what the fixed "Test Jackett" button hits)
   console.log(
-    "\n[2/3] Auth/status ping  →  /api/v2.0/indexers/all/results?Query=__adb_ping__",
+    "\n[2/3] Torznab caps       →  /api/v2.0/indexers/all/results/torznab/api?t=caps",
   );
   try {
     const statusUrl = CFG.buildUrl(
       baseUrl,
-      "/api/v2.0/indexers/all/results",
-      { apikey, Query: "__adb_ping__" },
+      "/api/v2.0/indexers/all/results/torznab/api",
+      { apikey, t: "caps" },
     );
     const r = await get(statusUrl);
     console.log("  HTTP", r.status, r.status === 200 ? "(auth OK)" : "");
     if (r.status === 200) {
-      const j = JSON.parse(r.body);
-      const indexers = Array.isArray(j?.Indexers) ? j.Indexers : [];
-      console.log(`  Reachable indexers: ${indexers.length}`);
+      console.log("  Caps XML:", /<caps[\s>]/i.test(r.body) ? "present" : "not detected");
     } else {
       console.log("  Response body (truncated):", r.body.slice(0, 200));
     }
@@ -119,8 +117,8 @@ function get(url, timeoutMs = 15000) {
     const bad = "0".repeat(32);
     const badUrl = CFG.buildUrl(
       baseUrl,
-      "/api/v2.0/indexers/all/results",
-      { apikey: bad, Query: "__adb_ping__" },
+      "/api/v2.0/indexers/all/results/torznab/api",
+      { apikey: bad, t: "caps" },
     );
     const r = await get(badUrl);
     console.log(
