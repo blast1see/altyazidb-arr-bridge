@@ -5,12 +5,12 @@ $chromeDir = Join-Path $root "altyazidb-arr-bridge-chrome-0.1.1"
 $firefoxDir = Join-Path $root "altyazidb-arr-bridge-firefox-0.1.1"
 $tampermonkeyDir = Join-Path $root "tampermonkey"
 $releaseRoot = Join-Path $root "release"
-$releaseDir = Join-Path $releaseRoot "altyazidb-arr-bridge-complete-0.1.3"
+$releaseDir = Join-Path $releaseRoot "altyazidb-arr-bridge-complete-0.1.4"
 
-$chromeZip = Join-Path $root "altyazidb-arr-bridge-chrome-0.1.3.zip"
-$firefoxZip = Join-Path $root "altyazidb-arr-bridge-firefox-0.1.3.zip"
-$firefoxXpi = Join-Path $root "altyazidb-arr-bridge-firefox-0.1.3.xpi"
-$releaseZip = Join-Path $releaseRoot "altyazidb-arr-bridge-complete-0.1.3.zip"
+$chromeZip = Join-Path $root "altyazidb-arr-bridge-chrome-0.1.4.zip"
+$firefoxZip = Join-Path $root "altyazidb-arr-bridge-firefox-0.1.4.zip"
+$firefoxXpi = Join-Path $root "altyazidb-arr-bridge-firefox-0.1.4.xpi"
+$releaseZip = Join-Path $releaseRoot "altyazidb-arr-bridge-complete-0.1.4.zip"
 
 foreach ($path in @($chromeDir, $firefoxDir, $tampermonkeyDir)) {
   if (-not (Test-Path -LiteralPath $path)) {
@@ -46,7 +46,7 @@ Copy-Item -LiteralPath $chromeDir -Destination $releaseDir -Recurse
 Copy-Item -LiteralPath $firefoxDir -Destination $releaseDir -Recurse
 Copy-Item -LiteralPath $tampermonkeyDir -Destination $releaseDir -Recurse
 Copy-Item -LiteralPath $chromeZip, $firefoxZip, $firefoxXpi -Destination $releaseDir -Force
-Copy-Item -LiteralPath (Join-Path $root "README.md"), (Join-Path $root "OPTIMIZATIONS.md") -Destination $releaseDir -Force
+Copy-Item -LiteralPath (Join-Path $root "README.md"), (Join-Path $root "CHANGELOG.md"), (Join-Path $root "OPTIMIZATIONS.md") -Destination $releaseDir -Force
 
 Compress-Archive -Path (Join-Path $releaseDir "*") -DestinationPath $releaseZip -CompressionLevel Optimal
 

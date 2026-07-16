@@ -10,27 +10,25 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
 
       - name: Check JavaScript syntax
-        shell: bash
-        run: |
-          set -euo pipefail
-          find altyazidb-arr-bridge-chrome-0.1.0/src \
-               altyazidb-arr-bridge-firefox-0.1.0/src \
-               tampermonkey \
-               -name '*.js' -print0 | xargs -0 -n1 node --check
+        run: npm run lint
 
-      - name: Parse manifests
-        shell: bash
-        run: |
-          node -e "JSON.parse(require('fs').readFileSync('altyazidb-arr-bridge-chrome-0.1.0/manifest.json', 'utf8'))"
-          node -e "JSON.parse(require('fs').readFileSync('altyazidb-arr-bridge-firefox-0.1.0/manifest.json', 'utf8'))"
+      - name: Run fixtures and mock API tests
+        run: npm test
+
+      - name: Verify manifests and mirrored sources
+        run: npm run package:verify
 
       - name: Lint Firefox extension
-        run: npx --yes web-ext@latest lint --source-dir altyazidb-arr-bridge-firefox-0.1.0 --self-hosted
+        run: npm run lint:firefox

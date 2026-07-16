@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AltyaziDB Arr Bridge
 // @namespace    https://altyazidb.com/
-// @version      0.1.3-tm
+// @version      0.1.4-tm
 // @description  Adds Radarr, Sonarr, optional Prowlarr, and optional Jackett buttons to AltyaziDB subtitle pages.
 // @match        http://altyazidb.com/*
 // @match        http://*.altyazidb.com/*
@@ -298,7 +298,25 @@
       parsed.search = "";
       return parsed.toString().replace(/\/+$/, "");
     } catch (_error) {
-      return normalizeSpace(fallback || "");
+      return raw;
+    }
+  }
+
+  function safeHttpUrl(value) {
+    try {
+      const parsed = new URL(normalizeSpace(value));
+
+      if (!["http:", "https:"].includes(parsed.protocol)) {
+        return "";
+      }
+
+      if (parsed.username || parsed.password) {
+        return "";
+      }
+
+      return parsed.toString();
+    } catch (_error) {
+      return "";
     }
   }
 
@@ -401,8 +419,27 @@
   function connectionErrorMessage(service, baseUrl) {
     const label = serviceLabel(service);
     return isLocalhostUrl(baseUrl)
-      ? `Could not connect to localhost ${label}`
-      : `Could not connect to ${label}`;
+      ? `Could not connect to localhost ${label}. Check that the service is running and the URL and port are correct.`
+      : `Could not connect to ${label}. Check the URL, network, TLS certificate, and userscript @connect rule.`;
+  }
+
+  function requestFailureMessage(service, baseUrl, error) {
+    const label = serviceLabel(service);
+    const message = String(error?.message || "");
+
+    if (/timed?\s*out|timeout/i.test(message)) {
+      return `${label} request timed out. Check the service load and network path.`;
+    }
+
+    if (/certificate|cert_authority|ssl|tls|secure connection/i.test(message)) {
+      return `${label} TLS/certificate validation failed. Fix or trust the certificate, then retry.`;
+    }
+
+    if (/invalid url|failed to construct|url is malformed/i.test(message)) {
+      return `${label} URL is invalid. Check the configured protocol, host, and port.`;
+    }
+
+    return connectionErrorMessage(service, baseUrl);
   }
 
   function escapeRegExp(value) {
@@ -693,31 +730,31 @@
       return { path: "/api/v1/system/status", params: {} };
     }
     if (service === "jackett") {
-      // `/api/v2.0/server/config` requires cookie-based admin auth and 302-redirects
-      // when authenticated with ?apikey=, so the status ping would hit the login page.
-      // `/api/v2.0/indexers/all/results` honours ?apikey= (200 on valid, 401 on invalid).
-      // A nonsense Query keeps the response small and avoids triggering real indexer searches.
       return {
-        path: "/api/v2.0/indexers/all/results",
-        params: { Query: "__adb_ping__" }
+        path: "/api/v2.0/indexers/all/results/torznab/api",
+        params: { t: "caps" }
       };
     }
     return { path: "/api/v3/system/status", params: {} };
   }
 
   function fallbackUrlForService(service, settings, searchPlan) {
-    const baseUrl = serviceBaseUrl(settings, service);
-    const term = searchPlan.fallbackTerm || searchPlan.term;
+    try {
+      const baseUrl = serviceBaseUrl(settings, service);
+      const term = searchPlan.fallbackTerm || searchPlan.term;
 
-    if (service === "prowlarr") {
-      return buildProwlarrSearchPageUrl(baseUrl, term, settings.prowlarrLimit);
+      if (service === "prowlarr") {
+        return buildProwlarrSearchPageUrl(baseUrl, term, settings.prowlarrLimit);
+      }
+
+      if (service === "jackett") {
+        return buildJackettSearchPageUrl(baseUrl, term);
+      }
+
+      return buildAddPageUrl(baseUrl, term);
+    } catch (_error) {
+      return "";
     }
-
-    if (service === "jackett") {
-      return buildJackettSearchPageUrl(baseUrl, term);
-    }
-
-    return buildAddPageUrl(baseUrl, term);
   }
 
   function openUrl(url) {
@@ -778,8 +815,8 @@
         headers,
         body: options.body || null
       });
-    } catch (_error) {
-      throw new ArrBridgeError("connect", connectionErrorMessage(service, baseUrl));
+    } catch (error) {
+      throw new ArrBridgeError("connect", requestFailureMessage(service, baseUrl, error));
     }
 
     if (response.status === 401 || response.status === 403) {
@@ -941,15 +978,20 @@ async function lookupArr(service, media, settings) {
   const baseUrl = serviceBaseUrl(settings, service);
   const fallbackUrl = fallbackUrlForService(service, settings, searchPlan);
 
-    if (!serviceApiKey(settings, service)) {
+  if (!serviceApiKey(settings, service)) {
+    if (fallbackUrl) {
       openUrl(fallbackUrl);
-      return {
+    }
+
+    return {
         ok: false,
         service,
         error: `${serviceLabel(service)} API key missing`,
         fallbackUrl,
-        opened: true,
-        message: `${serviceLabel(service)} API key missing. Opened browser search fallback.`
+      opened: Boolean(fallbackUrl),
+      message: fallbackUrl
+        ? `${serviceLabel(service)} API key missing. Opened browser search fallback.`
+        : `${serviceLabel(service)} API key missing and the configured URL is invalid.`
     };
   }
 
@@ -1048,14 +1090,19 @@ async function lookupArr(service, media, settings) {
     const fallbackUrl = fallbackUrlForService("prowlarr", settings, plans[0]);
 
     if (!serviceApiKey(settings, "prowlarr")) {
-      openUrl(fallbackUrl);
+      if (fallbackUrl) {
+        openUrl(fallbackUrl);
+      }
+
       return {
         ok: false,
         service: "prowlarr",
         error: "Prowlarr API key missing",
         fallbackUrl,
-        opened: true,
-        message: "Prowlarr API key missing. Opened browser search fallback."
+        opened: Boolean(fallbackUrl),
+        message: fallbackUrl
+          ? "Prowlarr API key missing. Opened browser search fallback."
+          : "Prowlarr API key missing and the configured URL is invalid."
     };
   }
 
@@ -1071,6 +1118,8 @@ async function lookupArr(service, media, settings) {
         break;
       }
     }
+
+    const activeFallbackUrl = fallbackUrlForService("prowlarr", settings, activePlan);
 
     if (!releases.length) {
       return {
@@ -1088,17 +1137,20 @@ async function lookupArr(service, media, settings) {
         service: "prowlarr",
         mode: "showPopupResults",
         searchTerm: activePlan.term,
-        fallbackUrl,
-        results: releases.slice(0, 8).map(summarizeRelease)
+        fallbackUrl: activeFallbackUrl,
+        results: releases.slice(0, 8).map((result) => ({
+          ...summarizeRelease(result),
+          searchTerm: activePlan.term
+        }))
       };
     }
 
-    openUrl(fallbackUrl);
+    openUrl(activeFallbackUrl);
     return {
       ok: true,
       service: "prowlarr",
       opened: true,
-      openedUrl: fallbackUrl,
+      openedUrl: activeFallbackUrl,
       message: "Opened Prowlarr search."
     };
   }
@@ -1115,14 +1167,19 @@ async function lookupArr(service, media, settings) {
     const fallbackUrl = fallbackUrlForService("jackett", settings, plans[0]);
 
     if (!serviceApiKey(settings, "jackett")) {
-      openUrl(fallbackUrl);
+      if (fallbackUrl) {
+        openUrl(fallbackUrl);
+      }
+
       return {
         ok: false,
         service: "jackett",
         error: "Jackett API key missing",
         fallbackUrl,
-        opened: true,
-        message: "Jackett API key missing. Opened Jackett search fallback."
+        opened: Boolean(fallbackUrl),
+        message: fallbackUrl
+          ? "Jackett API key missing. Opened Jackett search fallback."
+          : "Jackett API key missing and the configured URL is invalid."
       };
     }
 
@@ -1142,6 +1199,8 @@ async function lookupArr(service, media, settings) {
         break;
       }
     }
+
+    const activeFallbackUrl = fallbackUrlForService("jackett", settings, activePlan);
 
     if (!rawResults.length) {
       return {
@@ -1163,17 +1222,20 @@ async function lookupArr(service, media, settings) {
         service: "jackett",
         mode: "showPopupResults",
         searchTerm: activePlan.term,
-        fallbackUrl,
-        results: rawResults.slice(0, Math.min(8, limit)).map(summarizeJackettRelease)
+        fallbackUrl: activeFallbackUrl,
+        results: rawResults.slice(0, limit).map((result) => ({
+          ...summarizeJackettRelease(result),
+          searchTerm: activePlan.term
+        }))
       };
     }
 
-    openUrl(fallbackUrl);
+    openUrl(activeFallbackUrl);
     return {
       ok: true,
       service: "jackett",
       opened: true,
-      openedUrl: fallbackUrl,
+      openedUrl: activeFallbackUrl,
       message: "Opened Jackett search."
     };
   }
@@ -1283,26 +1345,30 @@ async function lookupArr(service, media, settings) {
   async function openResult(service, media, result, settings) {
     const searchPlan = buildSearchPlan(service, media);
 
-    if (service === "prowlarr") {
-      const url = buildProwlarrSearchPageUrl(
-        serviceBaseUrl(settings, service),
-        searchPlan.fallbackTerm || searchPlan.term,
-        settings.prowlarrLimit
-      );
-      openUrl(url);
-      return { ok: true, openedUrl: url };
-    }
+    if (service === "prowlarr" || service === "jackett") {
+      const infoUrl = safeHttpUrl(result?.infoUrl);
 
-    if (service === "jackett") {
-      const directUrl = result?.infoUrl || "";
-      if (directUrl) {
-        openUrl(directUrl);
-        return { ok: true, openedUrl: directUrl };
+      if (infoUrl) {
+        openUrl(infoUrl);
+        return { ok: true, openedUrl: infoUrl };
       }
-      const url = buildJackettSearchPageUrl(
-        serviceBaseUrl(settings, service),
-        searchPlan.fallbackTerm || searchPlan.term
+
+      const term = normalizeSpace(
+        result?.searchTerm ||
+        result?.title ||
+        searchPlan.fallbackTerm ||
+        searchPlan.term
       );
+      const url = service === "prowlarr"
+        ? buildProwlarrSearchPageUrl(
+          serviceBaseUrl(settings, service),
+          term,
+          settings.prowlarrLimit
+        )
+        : buildJackettSearchPageUrl(
+          serviceBaseUrl(settings, service),
+          term
+        );
       openUrl(url);
       return { ok: true, openedUrl: url };
     }
@@ -1606,28 +1672,35 @@ async function lookupArr(service, media, settings) {
     return ids;
   }
 
-  function detectSeasonEpisode(snapshot) {
-    const body = allPageText(snapshot);
-    const compact = body.match(/\bS(?:eason)?\s*0?(\d{1,2})\s*(?:E|Ep|Episode|B[o\u00f6]l[u\u00fc]m|x)\s*0?(\d{1,3})\b/i);
-    const xFormat = body.match(/\b(\d{1,2})\s*[xX]\s*(\d{1,3})\b/);
-    const seasonText =
-      body.match(/\b(?:Season|Sezon)\s*0?(\d{1,2})\b/i) ||
-      body.match(/\b0?(\d{1,2})\.\s*(?:Season|Sezon)\b/i);
-    const episodeText =
-      body.match(/\b(?:Episode|B[o\u00f6]l[u\u00fc]m)\s*0?(\d{1,3})\b/i) ||
-      body.match(/\b0?(\d{1,3})\.\s*(?:Episode|B[o\u00f6]l[u\u00fc]m)\b/i);
+  function detectSeasonEpisode(rawTitle) {
+    let decodedPath = window.location.pathname;
 
-    if (compact) {
-      return {
-        seasonNumber: Number(compact[1]),
-        episodeNumber: Number(compact[2])
-      };
+    try {
+      decodedPath = decodeURIComponent(decodedPath);
+    } catch (_error) {
+      // Keep the original path when it contains malformed escape sequences.
     }
 
-    if (xFormat) {
+    const pageSignal = normalizeSpace(
+      `${decodedPath.replace(/[\/_.-]+/g, " ")} ${rawTitle || ""}`
+    );
+    const compact = pageSignal.match(/\bS(?:eason)?\s*0?(\d{1,2})\s*(?:E|Ep|Episode|B[o\u00f6]l[u\u00fc]m|x)\s*0?(\d{1,3})\b/i);
+    const xFormat = pageSignal.match(/\b(\d{1,2})\s*[xX]\s*(\d{1,3})\b/);
+    const namedPair =
+      pageSignal.match(/\b(?:Season|Sezon)\s*0?(\d{1,2})\D{0,20}(?:Episode|B[o\u00f6]l[u\u00fc]m)\s*0?(\d{1,3})\b/i) ||
+      pageSignal.match(/\b0?(\d{1,2})\.\s*(?:Season|Sezon)\D{0,20}0?(\d{1,3})\.\s*(?:Episode|B[o\u00f6]l[u\u00fc]m)\b/i);
+    const seasonText =
+      pageSignal.match(/\b(?:Season|Sezon)\s*0?(\d{1,2})\b/i) ||
+      pageSignal.match(/\b0?(\d{1,2})\.\s*(?:Season|Sezon)\b/i);
+    const episodeText =
+      pageSignal.match(/\b(?:Episode|B[o\u00f6]l[u\u00fc]m)\s*0?(\d{1,3})\b/i) ||
+      pageSignal.match(/\b0?(\d{1,3})\.\s*(?:Episode|B[o\u00f6]l[u\u00fc]m)\b/i);
+
+    if (compact || xFormat || namedPair) {
+      const match = compact || xFormat || namedPair;
       return {
-        seasonNumber: Number(xFormat[1]),
-        episodeNumber: Number(xFormat[2])
+        seasonNumber: Number(match[1]),
+        episodeNumber: Number(match[2])
       };
     }
 
@@ -1726,13 +1799,13 @@ async function lookupArr(service, media, settings) {
     const snapshot = createPageSnapshot();
     const signals = jsonLdSignals(snapshot.jsonLd);
     const ids = extractIdsFromLinks(snapshot);
-    const seasonEpisode = detectSeasonEpisode(snapshot);
     const rawTitle =
       text(".v2-detail-title") ||
       text("h1") ||
       meta('meta[property="og:title"]') ||
       meta('meta[property="twitter:title"]') ||
       document.title;
+    const seasonEpisode = detectSeasonEpisode(rawTitle);
     const title = stripSiteTitle(rawTitle);
     const originalTitle = labelValue(/orijinal ba\u015fl\u0131k|original title|original name/i) || title;
     const year = findYear(snapshot);
@@ -2638,7 +2711,7 @@ async function lookupArr(service, media, settings) {
             <label>Base URL <input id="adbJackettBaseUrl" type="url" value="${escapeAttr(settings.jackettBaseUrl)}"></label>
             <label>API key <input id="adbJackettApiKey" type="password" autocomplete="off" value="${escapeAttr(settings.jackettApiKey)}"></label>
             <label>Indexer id <input id="adbJackettIndexer" type="text" placeholder="all" value="${escapeAttr(settings.jackettIndexer)}"></label>
-            <label>Search result limit <input id="adbJackettLimit" type="number" min="1" max="100" step="1" value="${escapeAttr(settings.jackettLimit)}"></label>
+            <label>Popup result limit <input id="adbJackettLimit" type="number" min="1" max="100" step="1" value="${escapeAttr(settings.jackettLimit)}"></label>
             <label class="adb-tm-checkbox">
               <input id="adbShowJackettButton" type="checkbox"${settings.showJackettButton !== false ? " checked" : ""}>
               <span>Show Jackett button</span>
