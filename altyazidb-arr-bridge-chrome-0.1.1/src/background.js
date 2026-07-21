@@ -7,6 +7,7 @@ const runtimeApi = globalThis.browser?.runtime || globalThis.chrome?.runtime;
 const storageApi = globalThis.browser?.storage || globalThis.chrome?.storage;
 const tabsApi = globalThis.browser?.tabs || globalThis.chrome?.tabs;
 const permissionsApi = globalThis.browser?.permissions || globalThis.chrome?.permissions;
+const VALID_SERVICES = new Set(["radarr", "sonarr", "prowlarr", "jackett"]);
 
 class ArrBridgeError extends Error {
   constructor(code, message) {
@@ -45,12 +46,18 @@ async function getSettings() {
 }
 
 function createTab(url) {
+  const safeUrl = CFG.safeHttpUrl(url);
+
+  if (!safeUrl) {
+    return Promise.reject(new ArrBridgeError("invalidUrl", "Refused to open an unsafe URL"));
+  }
+
   if (usingPromiseBrowserApi()) {
-    return tabsApi.create({ url });
+    return tabsApi.create({ url: safeUrl });
   }
 
   return new Promise((resolve) => {
-    tabsApi.create({ url }, resolve);
+    tabsApi.create({ url: safeUrl }, resolve);
   });
 }
 
@@ -101,7 +108,11 @@ function fetchFailureMessage(service, baseUrl, err) {
     return `${label} URL is invalid. Check the configured protocol, host, and port.`;
   }
 
-  return connectionErrorMessage(service, baseUrl);
+  if (/redirect/i.test(message)) {
+    return `${label} redirect was refused. Redirects are not followed; configure the final service URL directly.`;
+  }
+
+  return `${connectionErrorMessage(service, baseUrl)} Redirects are not followed; configure the final service URL directly if this address redirects.`;
 }
 
 function statusPath(service) {
@@ -138,15 +149,30 @@ function fallbackUrlForService(service, settings, searchPlan) {
   }
 }
 
+function redactSensitive(value, apiKey = "") {
+  let redacted = String(value || "");
+
+  if (apiKey) {
+    for (const secret of [apiKey, encodeURIComponent(apiKey)]) {
+      redacted = redacted.split(secret).join("[REDACTED]");
+    }
+  }
+
+  return redacted.replace(/(apikey\s*[=:]\s*)[^&\s<>'"]+/gi, "$1[REDACTED]");
+}
+
 async function fetchWithTimeout(url, options, timeoutMs = 10000) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    return await fetch(url, {
+    const response = await fetch(url, {
       ...options,
+      redirect: "error",
       signal: controller.signal
     });
+    const text = response.status === 204 ? "" : await response.text();
+    return { response, text };
   } finally {
     clearTimeout(timeout);
   }
@@ -194,15 +220,28 @@ async function callArrApi(service, settings, path, params = {}, options = {}) {
   }
 
   let response;
+  let text;
 
   try {
-    response = await fetchWithTimeout(url, {
+    ({ response, text } = await fetchWithTimeout(url, {
       method: options.method || "GET",
       headers,
       body: options.body ? JSON.stringify(options.body) : undefined
-    });
+    }));
   } catch (error) {
     throw new ArrBridgeError("connect", fetchFailureMessage(service, baseUrl, error));
+  }
+
+  if (response.url) {
+    try {
+      if (new URL(response.url).origin !== new URL(url).origin) {
+        throw new ArrBridgeError("redirect", `${label} redirected to a different origin`);
+      }
+    } catch (error) {
+      if (error instanceof ArrBridgeError) {
+        throw error;
+      }
+    }
   }
 
   if (response.status === 401 || response.status === 403) {
@@ -210,13 +249,7 @@ async function callArrApi(service, settings, path, params = {}, options = {}) {
   }
 
   if (!response.ok) {
-    let detail = "";
-
-    try {
-      detail = await response.text();
-    } catch (_error) {
-      detail = "";
-    }
+    const detail = redactSensitive(text, apiKey).slice(0, 180);
 
     throw new ArrBridgeError(
       "api",
@@ -228,16 +261,22 @@ async function callArrApi(service, settings, path, params = {}, options = {}) {
     return null;
   }
 
-  const text = await response.text();
-
   if (!text) {
-    return null;
+    if (options.responseType === "text") {
+      return "";
+    }
+
+    throw new ArrBridgeError("invalidResponse", `${label} returned invalid JSON`);
+  }
+
+  if (options.responseType === "text") {
+    return text;
   }
 
   try {
     return JSON.parse(text);
   } catch (_error) {
-    return text;
+    throw new ArrBridgeError("invalidResponse", `${label} returned invalid JSON`);
   }
 }
 
@@ -317,33 +356,41 @@ function resultSearchTerm(service, result, fallbackTerm) {
 }
 
 async function findExisting(service, settings, result) {
-  try {
-    if (service === "radarr" && result?.tmdbId) {
-      const data = await callArrApi(
-        service,
-        settings,
-        "/api/v3/movie",
-        { tmdbId: result.tmdbId },
-        { requireKey: true }
-      );
-      return normalizeResults(data)[0] || null;
-    }
+  if (service === "radarr" && result?.tmdbId) {
+    const data = await callArrApi(
+      service,
+      settings,
+      "/api/v3/movie",
+      { tmdbId: result.tmdbId },
+      { requireKey: true }
+    );
+    return normalizeResults(data)[0] || null;
+  }
 
-    if (service === "sonarr" && result?.tvdbId) {
-      const data = await callArrApi(
-        service,
-        settings,
-        "/api/v3/series",
-        { tvdbId: result.tvdbId },
-        { requireKey: true }
-      );
-      return normalizeResults(data)[0] || null;
-    }
-  } catch (_error) {
-    return null;
+  if (service === "sonarr" && result?.tvdbId) {
+    const data = await callArrApi(
+      service,
+      settings,
+      "/api/v3/series",
+      { tvdbId: result.tvdbId },
+      { requireKey: true }
+    );
+    return normalizeResults(data)[0] || null;
   }
 
   return null;
+}
+
+function existingIdentity(service, result) {
+  if (service === "radarr" && result?.tmdbId) {
+    return `tmdb:${Number(result.tmdbId)}`;
+  }
+
+  if (service === "sonarr" && result?.tvdbId) {
+    return `tvdb:${Number(result.tvdbId)}`;
+  }
+
+  return "";
 }
 
 async function lookupArr(service, media, settings) {
@@ -372,8 +419,11 @@ async function lookupArr(service, media, settings) {
     (service === "radarr" && media?.tmdbId && media?.tmdbType !== "tv") ||
     (service === "sonarr" && media?.tvdbId);
 
+  let checkedExistingIdentity = "";
+
   if (settings.behavior !== "showPopupResults" && canCheckExisting) {
     const existing = await findExisting(service, settings, media);
+    checkedExistingIdentity = existingIdentity(service, media);
     const existingUrl = CFG.buildDetailPageUrl(baseUrl, service, existing);
 
     if (existingUrl) {
@@ -419,10 +469,19 @@ async function lookupArr(service, media, settings) {
   }
 
   if (settings.behavior === "autoAdd") {
-    return addResult(service, media, best, settings, fallbackUrl);
+    return addResult(
+      service,
+      media,
+      best,
+      settings,
+      fallbackUrl,
+      checkedExistingIdentity
+    );
   }
 
-  const existing = await findExisting(service, settings, best);
+  const existing = checkedExistingIdentity === existingIdentity(service, best)
+    ? null
+    : await findExisting(service, settings, best);
   const existingUrl = CFG.buildDetailPageUrl(baseUrl, service, existing);
 
   if (existingUrl) {
@@ -496,7 +555,11 @@ async function lookupProwlarr(media, settings) {
       plan.apiPath,
       plan.apiParams
     );
-    releases = normalizeResults(data);
+    if (!Array.isArray(data)) {
+      throw new ArrBridgeError("invalidResponse", "Prowlarr returned an invalid response");
+    }
+
+    releases = data;
     activePlan = plan;
 
     if (releases.length) {
@@ -589,9 +652,11 @@ async function lookupJackett(media, settings) {
       plan.apiParams
     );
 
-    // Jackett JSON shape: { Results: [...], Indexers: [...] }
-    const rawResults = Array.isArray(data?.Results) ? data.Results : normalizeResults(data);
-    releases = rawResults;
+    if (!data || !Array.isArray(data.Results)) {
+      throw new ArrBridgeError("invalidResponse", "Jackett returned an invalid response");
+    }
+
+    releases = data.Results;
     activePlan = plan;
 
     if (releases.length) {
@@ -639,9 +704,38 @@ async function lookupJackett(media, settings) {
   };
 }
 
-async function addResult(service, media, result, settings, fallbackUrl) {
+async function addResult(
+  service,
+  media,
+  result,
+  settings,
+  fallbackUrl,
+  checkedExistingIdentity = ""
+) {
   const label = serviceLabel(service);
-  const existing = await findExisting(service, settings, result);
+
+  if (service === "radarr") {
+    if (!settings.radarrRootFolderPath || !settings.radarrQualityProfileId) {
+      return {
+        ok: false,
+        service,
+        error: "Radarr auto-add requires a root folder and quality profile",
+        fallbackUrl
+      };
+    }
+
+  } else if (!settings.sonarrRootFolderPath || !settings.sonarrQualityProfileId) {
+    return {
+      ok: false,
+      service,
+      error: "Sonarr auto-add requires a root folder and quality profile",
+      fallbackUrl
+    };
+  }
+
+  const existing = checkedExistingIdentity === existingIdentity(service, result)
+    ? null
+    : await findExisting(service, settings, result);
   const existingUrl = CFG.buildDetailPageUrl(CFG.serviceBaseUrl(settings, service), service, existing);
 
   if (existingUrl) {
@@ -656,15 +750,6 @@ async function addResult(service, media, result, settings, fallbackUrl) {
   }
 
   if (service === "radarr") {
-    if (!settings.radarrRootFolderPath || !settings.radarrQualityProfileId) {
-      return {
-        ok: false,
-        service,
-        error: "Radarr auto-add requires a root folder and quality profile",
-        fallbackUrl
-      };
-    }
-
     const payload = {
       ...result,
       qualityProfileId: Number(settings.radarrQualityProfileId),
@@ -693,15 +778,6 @@ async function addResult(service, media, result, settings, fallbackUrl) {
       opened: !!detailUrl,
       openedUrl: detailUrl,
       message: "Added movie to Radarr without starting a search."
-    };
-  }
-
-  if (!settings.sonarrRootFolderPath || !settings.sonarrQualityProfileId) {
-    return {
-      ok: false,
-      service,
-      error: "Sonarr auto-add requires a root folder and quality profile",
-      fallbackUrl
     };
   }
 
@@ -801,7 +877,9 @@ async function testConnection(service) {
 
   try {
     const { path, params } = statusPath(service);
-    await callArrApi(service, settings, path, params);
+    await callArrApi(service, settings, path, params, {
+      responseType: service === "jackett" ? "text" : "json"
+    });
     return {
       ok: true,
       service,
@@ -847,19 +925,27 @@ async function loadChoices(service) {
   }
 }
 
-async function handleMessage(message) {
+async function handleMessage(message, sender) {
+  if (!sender || sender.id !== runtimeApi?.id) {
+    return {
+      ok: false,
+      error: "Rejected extension message sender"
+    };
+  }
+
   const type = message?.type;
 
   if (type === "ADB_LOOKUP") {
-    const settings = await getSettings();
     const service = message.service;
 
-    if (!service) {
+    if (!VALID_SERVICES.has(service)) {
       return {
         ok: false,
-        error: "Could not detect media type"
+        error: "Invalid service"
       };
     }
+
+    const settings = await getSettings();
 
     try {
       if (service === "prowlarr") {
@@ -884,19 +970,42 @@ async function handleMessage(message) {
   }
 
   if (type === "ADB_OPEN_RESULT") {
+    if (!VALID_SERVICES.has(message.service)) {
+      return { ok: false, error: "Invalid service" };
+    }
+
     return openResult(message);
   }
 
   if (type === "ADB_OPEN_URL" && message.url) {
-    await createTab(message.url);
-    return { ok: true, openedUrl: message.url };
+    if (!VALID_SERVICES.has(message.service)) {
+      return { ok: false, error: "Invalid service" };
+    }
+
+    const settings = await getSettings();
+    const safeUrl = CFG.configuredServiceUrl(settings, message.service, message.url);
+
+    if (!safeUrl) {
+      return { ok: false, error: "Refused to open an untrusted URL" };
+    }
+
+    await createTab(safeUrl);
+    return { ok: true, openedUrl: safeUrl };
   }
 
   if (type === "ADB_TEST_CONNECTION") {
+    if (!VALID_SERVICES.has(message.service)) {
+      return { ok: false, error: "Invalid service" };
+    }
+
     return testConnection(message.service);
   }
 
   if (type === "ADB_LOAD_CHOICES") {
+    if (!["radarr", "sonarr"].includes(message.service)) {
+      return { ok: false, error: "Invalid service" };
+    }
+
     return loadChoices(message.service);
   }
 
@@ -913,10 +1022,10 @@ if (runtimeApi?.onInstalled) {
 }
 
 if (usingPromiseBrowserApi()) {
-  runtimeApi.onMessage.addListener((message) => handleMessage(message));
+  runtimeApi.onMessage.addListener((message, sender) => handleMessage(message, sender));
 } else {
-  runtimeApi.onMessage.addListener((message, _sender, sendResponse) => {
-    handleMessage(message)
+  runtimeApi.onMessage.addListener((message, sender, sendResponse) => {
+    handleMessage(message, sender)
       .then(sendResponse)
       .catch((error) => {
         sendResponse({

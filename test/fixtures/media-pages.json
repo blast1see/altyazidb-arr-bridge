@@ -44,6 +44,17 @@
     }
   },
   {
+    "name": "Explicit season title",
+    "pathname": "/dizi/186-the-boys.html",
+    "title": "The Boys Season 5 - AltyaziDB",
+    "subtitleTableNoise": "The.Boys.S05E08.2160p.WEB-DL",
+    "expected": {
+      "mediaType": "season",
+      "seasonNumber": 5,
+      "episodeNumber": null
+    }
+  },
+  {
     "name": "Explicit episode title",
     "pathname": "/dizi/186-the-boys.html",
     "title": "The Boys S05E08 - AltyaziDB",
@@ -52,6 +63,17 @@
       "mediaType": "episode",
       "seasonNumber": 5,
       "episodeNumber": 8
+    }
+  },
+  {
+    "name": "Unknown detail page",
+    "pathname": "/detay/mystery.html",
+    "title": "Mystery Subtitle Page - AltyaziDB",
+    "subtitleTableNoise": "Another.Show.S02E03.2026.WEB-DL",
+    "expected": {
+      "mediaType": "unknown",
+      "seasonNumber": null,
+      "episodeNumber": null
     }
   }
 ]

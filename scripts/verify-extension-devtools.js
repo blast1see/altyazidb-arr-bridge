@@ -7,7 +7,7 @@ const path = require("node:path");
 const root = path.resolve(__dirname, "..");
 const chromeDir = path.join(root, "altyazidb-arr-bridge-chrome-0.1.1");
 const firefoxDir = path.join(root, "altyazidb-arr-bridge-firefox-0.1.1");
-const version = "0.1.4";
+const version = readJson(path.join(root, "package.json")).version;
 let checks = 0;
 
 function check(condition, message) {
@@ -95,14 +95,29 @@ check(
   "Firefox optional host permissions missing"
 );
 
-for (const relativePath of [
-  "src/background.js",
-  "src/config.js",
-  "src/content.js",
-  "src/options.js",
-  "options.html",
-  "styles/content.css"
-]) {
+function relativeFiles(dir) {
+  const files = [];
+
+  function walk(currentDir) {
+    for (const entry of fs.readdirSync(currentDir, { withFileTypes: true })) {
+      const fullPath = path.join(currentDir, entry.name);
+      if (entry.isDirectory()) walk(fullPath);
+      else files.push(path.relative(dir, fullPath).split(path.sep).join("/"));
+    }
+  }
+
+  walk(dir);
+  return files.filter((file) => file !== "manifest.json").sort();
+}
+
+const chromeFiles = relativeFiles(chromeDir);
+const firefoxFiles = relativeFiles(firefoxDir);
+check(
+  JSON.stringify(chromeFiles) === JSON.stringify(firefoxFiles),
+  "Chrome/Firefox non-manifest file lists differ"
+);
+
+for (const relativePath of chromeFiles) {
   const chromeFile = fs.readFileSync(path.join(chromeDir, relativePath));
   const firefoxFile = fs.readFileSync(path.join(firefoxDir, relativePath));
   check(chromeFile.equals(firefoxFile), `Chrome/Firefox mismatch: ${relativePath}`);
@@ -120,13 +135,22 @@ check(background.includes("/results/torznab/api"), "Jackett caps endpoint missin
 check(background.includes('params: { t: "caps" }'), "Jackett caps request missing t=caps");
 check(background.includes("host permission is missing"), "Background permission guard missing");
 check(background.includes("CFG.safeHttpUrl(result.infoUrl)"), "Safe infoUrl handling missing");
+check(background.includes('redirect: "error"'), "Background redirect rejection missing");
+check(background.includes("CFG.configuredServiceUrl(settings"), "Open URL origin guard missing");
+check(background.includes("redactSensitive"), "Background API-key redaction missing");
 check(content.includes("CFG.detectSeasonEpisode(window.location.pathname, rawTitle)"), "Page-level season parser missing");
 check(!/detectSeasonEpisode\(snapshot\)/.test(content), "Content parser still passes the full page snapshot");
 check(options.includes("CFG.hostPermissionPattern(baseUrl)"), "Options do not use portless host permission patterns");
 check(options.includes("No connection request was sent."), "Permission rejection message missing");
 check(optionsHtml.includes("Popup result limit"), "Jackett popup limit label missing");
-check(userscript.includes("@version      0.1.4-tm"), "Tampermonkey version mismatch");
+check(!/setValue\([^,]+ApiKey/.test(options), "Options must not write saved API keys into inputs");
+check((optionsHtml.match(/Delete saved API key/g) || []).length === 4, "Options explicit API-key deletion controls missing");
+check((optionsHtml.match(/autocomplete="new-password"/g) || []).length === 4, "Options API-key fields must stay blank and disable autofill");
+check(userscript.includes(`@version      ${version}-tm`), "Tampermonkey version mismatch");
 check(!/Jackett blocked by CORS|AllowCORS=false/.test(userscript), "Tampermonkey still reports generic failures as CORS");
-check(packageScript.includes("0.1.4"), "Package script release version was not updated");
+check(userscript.includes('redirect: "error"'), "Tampermonkey redirect rejection missing");
+check(!/value="\$\{escapeAttr\(settings\.\w+ApiKey\)\}"/.test(userscript), "Tampermonkey renders a saved API key into HTML");
+check((userscript.match(/Delete saved API key/g) || []).length === 4, "Tampermonkey explicit API-key deletion controls missing");
+check(packageScript.includes("package.json") && packageScript.includes("$package.version"), "Package script must read the release version from package.json");
 
 console.log(`Package verification OK (${checks} checks).`);
