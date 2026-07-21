@@ -11,13 +11,14 @@ const extensionRoot = path.join(root, "altyazidb-arr-bridge-chrome-0.1.1");
 const configSource = fs.readFileSync(path.join(extensionRoot, "src", "config.js"), "utf8");
 const backgroundSource = fs.readFileSync(path.join(extensionRoot, "src", "background.js"), "utf8");
 
-function response(body, status = 200) {
+function response(body, status = 200, extra = {}) {
   const text = typeof body === "string" ? body : JSON.stringify(body);
 
   return {
     ok: status >= 200 && status < 300,
     status,
-    text: async () => text
+    text: async () => text,
+    url: extra.url || ""
   };
 }
 
@@ -32,6 +33,10 @@ function createHarness({
 
   const browser = {
     runtime: {
+      id: "adb-test-extension",
+      getURL(pathname = "") {
+        return `moz-extension://adb-test-extension/${pathname}`;
+      },
       onInstalled: {
         addListener() {}
       },
@@ -83,8 +88,8 @@ function createHarness({
   return {
     openedTabs,
     requests,
-    send(message) {
-      return messageHandler(message);
+    send(message, sender = { id: "adb-test-extension" }) {
+      return messageHandler(message, sender);
     }
   };
 }
@@ -489,4 +494,435 @@ test("auto-add payloads keep automatic searches disabled", async (t) => {
     assert.equal(addedPayload.addOptions.searchForMissingEpisodes, false);
     assert.equal(addedPayload.addOptions.searchForCutoffUnmetEpisodes, false);
   });
+});
+
+test("no-key fallback never opens an unsafe configured URL", async (t) => {
+  for (const value of [
+    "javascript:alert(1)",
+    "data:text/html,boom",
+    "blob:https://example.test/id",
+    "https://user:secret@example.test/base"
+  ]) {
+    await t.test(value.split(":", 1)[0], async () => {
+      const harness = createHarness({
+        settings: { radarrBaseUrl: value, radarrApiKey: "" }
+      });
+      const result = await harness.send({
+        type: "ADB_LOOKUP",
+        service: "radarr",
+        media: { title: "Movie", mediaType: "movie" }
+      });
+
+      assert.equal(result.ok, false);
+      assert.equal(result.opened, false);
+      assert.equal(harness.openedTabs.length, 0);
+    });
+  }
+});
+
+test("JSON APIs reject malformed and unexpected response shapes", async (t) => {
+  await t.test("malformed JSON", async () => {
+    const harness = createHarness({
+      settings: {
+        behavior: "showPopupResults",
+        radarrApiKey: "radarr-key"
+      },
+      fetchImpl() {
+        return response("{not-json");
+      }
+    });
+    const result = await harness.send({
+      type: "ADB_LOOKUP",
+      service: "radarr",
+      media: { title: "Movie", mediaType: "movie" }
+    });
+
+    assert.equal(result.ok, false);
+    assert.match(result.error, /invalid JSON/i);
+  });
+
+  await t.test("Jackett object without Results", async () => {
+    const harness = createHarness({
+      settings: {
+        behavior: "showPopupResults",
+        jackettApiKey: "jackett-key"
+      },
+      fetchImpl() {
+        return response({ Indexers: [] });
+      }
+    });
+    const result = await harness.send({
+      type: "ADB_LOOKUP",
+      service: "jackett",
+      media: { title: "Movie", mediaType: "movie" }
+    });
+
+    assert.equal(result.ok, false);
+    assert.match(result.error, /invalid response/i);
+  });
+});
+
+test("request failures redact API keys and disable redirects", async () => {
+  const secret = "jackett-super-secret";
+  let requestOptions;
+  const harness = createHarness({
+    settings: {
+      behavior: "showPopupResults",
+      jackettApiKey: secret
+    },
+    fetchImpl(_url, options) {
+      requestOptions = options;
+      return response(`failure apikey=${secret}&next=1 raw=${secret}`, 500);
+    }
+  });
+  const result = await harness.send({
+    type: "ADB_LOOKUP",
+    service: "jackett",
+    media: { title: "Movie", mediaType: "movie" }
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(requestOptions.redirect, "error");
+  assert.doesNotMatch(result.error, new RegExp(secret));
+  assert.match(result.error, /apikey=\[REDACTED\]/i);
+});
+
+test("401 and 403 responses are reported as rejected API keys", async (t) => {
+  for (const status of [401, 403]) {
+    await t.test(String(status), async () => {
+      const harness = createHarness({
+        settings: { behavior: "showPopupResults", radarrApiKey: "bad-key" },
+        fetchImpl() {
+          return response({ message: "denied" }, status);
+        }
+      });
+      const result = await harness.send({
+        type: "ADB_LOOKUP",
+        service: "radarr",
+        media: { title: "Movie", mediaType: "movie" }
+      });
+
+      assert.equal(result.ok, false);
+      assert.match(result.error, /API key rejected/i);
+    });
+  }
+});
+
+test("cross-origin response URLs are rejected", async () => {
+  const harness = createHarness({
+    settings: { behavior: "showPopupResults", jackettApiKey: "secret" },
+    fetchImpl() {
+      return response({ Results: [] }, 200, { url: "https://evil.example/results" });
+    }
+  });
+  const result = await harness.send({
+    type: "ADB_LOOKUP",
+    service: "jackett",
+    media: { title: "Movie", mediaType: "movie" }
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.error, /redirected to a different origin/i);
+});
+
+test("redirect policy rejects every redirect class without a second keyed request", async (t) => {
+  const cases = [
+    {
+      name: "same-origin trailing slash",
+      baseUrl: "https://arr.example.test/radarr",
+      target: "https://arr.example.test/radarr/"
+    },
+    {
+      name: "same-origin path",
+      baseUrl: "https://arr.example.test/radarr",
+      target: "https://arr.example.test/apps/radarr"
+    },
+    {
+      name: "HTTP to HTTPS",
+      baseUrl: "http://arr.example.test/radarr",
+      target: "https://arr.example.test/radarr"
+    },
+    {
+      name: "different origin",
+      baseUrl: "https://arr.example.test/radarr",
+      target: "https://other.example.test/radarr"
+    },
+    {
+      name: "keyed cross-origin",
+      baseUrl: "https://arr.example.test/radarr",
+      target: "https://collector.example.test/capture"
+    }
+  ];
+
+  for (const redirectCase of cases) {
+    await t.test(redirectCase.name, async () => {
+      const secret = `secret-${redirectCase.name.replaceAll(" ", "-")}`;
+      const targetRequests = [];
+      const harness = createHarness({
+        settings: {
+          radarrBaseUrl: redirectCase.baseUrl,
+          radarrApiKey: secret
+        },
+        fetchImpl(url, options) {
+          if (url === redirectCase.target) {
+            targetRequests.push({ url, options });
+          }
+          assert.equal(options.redirect, "error");
+          throw new TypeError(`Redirect refused: ${redirectCase.target}`);
+        }
+      });
+      const result = await harness.send({
+        type: "ADB_TEST_CONNECTION",
+        service: "radarr"
+      });
+
+      assert.equal(result.ok, false);
+      assert.match(result.error, /redirects are not followed/i);
+      assert.equal(harness.requests.length, 1);
+      assert.equal(harness.requests[0].options.headers["X-Api-Key"], secret);
+      assert.deepEqual(targetRequests, []);
+    });
+  }
+});
+
+test("valid no-key HTTP and HTTPS fallbacks open safely", async (t) => {
+  for (const baseUrl of ["http://127.0.0.1:7878", "https://arr.example.test/radarr"]) {
+    await t.test(new URL(baseUrl).protocol, async () => {
+      const harness = createHarness({ settings: { radarrBaseUrl: baseUrl, radarrApiKey: "" } });
+      const result = await harness.send({
+        type: "ADB_LOOKUP",
+        service: "radarr",
+        media: { title: "Movie", mediaType: "movie" }
+      });
+
+      assert.equal(result.opened, true);
+      assert.equal(harness.openedTabs.length, 1);
+      assert.equal(new URL(harness.openedTabs[0]).origin, new URL(baseUrl).origin);
+    });
+  }
+});
+
+test("open URL messages are limited to configured service origins and path prefixes", async () => {
+  const harness = createHarness({
+    settings: {
+      radarrBaseUrl: "https://arr.example.test/radarr",
+      sonarrBaseUrl: "https://sonarr.example.test/sonarr"
+    }
+  });
+  const allowed = await harness.send({
+    type: "ADB_OPEN_URL",
+    service: "radarr",
+    url: "https://arr.example.test/radarr/add/new?term=Movie"
+  });
+  const foreign = await harness.send({
+    type: "ADB_OPEN_URL",
+    service: "radarr",
+    url: "https://evil.example/phish"
+  });
+  const active = await harness.send({
+    type: "ADB_OPEN_URL",
+    service: "radarr",
+    url: "javascript:alert(1)"
+  });
+  const wrongService = await harness.send({
+    type: "ADB_OPEN_URL",
+    service: "radarr",
+    url: "https://sonarr.example.test/sonarr/add/new"
+  });
+  const siblingPath = await harness.send({
+    type: "ADB_OPEN_URL",
+    service: "radarr",
+    url: "https://arr.example.test/admin"
+  });
+  const prefixLookalike = await harness.send({
+    type: "ADB_OPEN_URL",
+    service: "radarr",
+    url: "https://arr.example.test/radarr-evil/add/new"
+  });
+
+  assert.equal(allowed.ok, true);
+  assert.equal(foreign.ok, false);
+  assert.equal(active.ok, false);
+  assert.equal(wrongService.ok, false);
+  assert.equal(siblingPath.ok, false);
+  assert.equal(prefixLookalike.ok, false);
+  assert.deepEqual(harness.openedTabs, [
+    "https://arr.example.test/radarr/add/new?term=Movie"
+  ]);
+});
+
+test("message sender and service values are allowlisted", async () => {
+  const harness = createHarness();
+  const foreign = await harness.send(
+    { type: "ADB_TEST_CONNECTION", service: "radarr" },
+    { id: "foreign-extension" }
+  );
+  const unknownService = await harness.send({
+    type: "ADB_LOOKUP",
+    service: "not-arr",
+    media: { title: "Movie" }
+  });
+  const unknownType = await harness.send({ type: "ADB_NOT_A_REAL_MESSAGE" });
+
+  assert.equal(foreign.ok, false);
+  assert.match(foreign.error, /sender/i);
+  assert.equal(unknownService.ok, false);
+  assert.match(unknownService.error, /service/i);
+  assert.equal(unknownType.ok, false);
+  assert.match(unknownType.error, /unknown extension message/i);
+  assert.equal(harness.requests.length, 0);
+});
+
+test("valid content and options messages survive a service-worker restart", async () => {
+  const settings = {
+    radarrBaseUrl: "https://arr.example.test/radarr",
+    radarrApiKey: "restart-key"
+  };
+  const firstWorker = createHarness({ settings });
+  const contentResult = await firstWorker.send(
+    {
+      type: "ADB_OPEN_URL",
+      service: "radarr",
+      url: "https://arr.example.test/radarr/add/new?term=Movie"
+    },
+    {
+      id: "adb-test-extension",
+      url: "https://altyazidb.com/film/724-michael.html"
+    }
+  );
+  const restartedWorker = createHarness({ settings });
+  const optionsResult = await restartedWorker.send(
+    { type: "ADB_TEST_CONNECTION", service: "radarr" },
+    {
+      id: "adb-test-extension",
+      url: "moz-extension://adb-test-extension/options.html"
+    }
+  );
+
+  assert.equal(contentResult.ok, true);
+  assert.equal(optionsResult.ok, true);
+  assert.equal(restartedWorker.requests.length, 1);
+  assert.equal(restartedWorker.requests[0].options.headers["X-Api-Key"], "restart-key");
+});
+
+test("strong IDs perform at most one existing-item check", async () => {
+  const harness = createHarness({
+    settings: {
+      behavior: "openSearchPage",
+      radarrApiKey: "radarr-key"
+    },
+    fetchImpl(url) {
+      const parsed = new URL(url);
+
+      if (parsed.pathname.endsWith("/api/v3/movie/lookup/tmdb")) {
+        return response([{ title: "Movie", tmdbId: 101, titleSlug: "movie" }]);
+      }
+
+      if (parsed.pathname.endsWith("/api/v3/movie")) {
+        return response([]);
+      }
+
+      throw new Error(`Unexpected request: ${url}`);
+    }
+  });
+  const result = await harness.send({
+    type: "ADB_LOOKUP",
+    service: "radarr",
+    media: {
+      title: "Movie",
+      mediaType: "movie",
+      tmdbId: 101,
+      tmdbType: "movie"
+    }
+  });
+  const existingRequests = harness.requests.filter((request) =>
+    new URL(request.url).pathname.endsWith("/api/v3/movie")
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(existingRequests.length, 1);
+});
+
+test("an existing item short-circuits lookup and opens its detail page", async () => {
+  const harness = createHarness({
+    settings: { behavior: "openSearchPage", radarrApiKey: "radarr-key" },
+    fetchImpl(url) {
+      const parsed = new URL(url);
+      assert.equal(parsed.pathname.endsWith("/api/v3/movie"), true);
+      return response([{ tmdbId: 101, titleSlug: "existing-movie" }]);
+    }
+  });
+  const result = await harness.send({
+    type: "ADB_LOOKUP",
+    service: "radarr",
+    media: { title: "Movie", mediaType: "movie", tmdbId: 101, tmdbType: "movie" }
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(harness.requests.length, 1);
+  assert.match(result.openedUrl, /\/movie\/existing-movie$/);
+});
+
+test("auto-add refuses invalid roots or profiles and remains opt-in", async (t) => {
+  await t.test("invalid auto-add settings", async () => {
+    const harness = createHarness({
+      settings: {
+        behavior: "autoAdd",
+        radarrApiKey: "radarr-key",
+        radarrRootFolderPath: "",
+        radarrQualityProfileId: "-1"
+      },
+      fetchImpl(url, options) {
+        assert.notEqual(options.method, "POST");
+        const parsed = new URL(url);
+        if (parsed.pathname.endsWith("/api/v3/movie/lookup")) {
+          return response([{ title: "Movie", tmdbId: 101, titleSlug: "movie" }]);
+        }
+        throw new Error(`Unexpected request: ${url}`);
+      }
+    });
+    const result = await harness.send({
+      type: "ADB_LOOKUP",
+      service: "radarr",
+      media: { title: "Movie", mediaType: "movie" }
+    });
+
+    assert.equal(result.ok, false);
+    assert.match(result.error, /root folder and quality profile/i);
+    assert.equal(harness.requests.some((request) => request.options.method === "POST"), false);
+  });
+
+  await t.test("default behavior never posts", async () => {
+    const harness = createHarness({
+      settings: { radarrApiKey: "radarr-key" },
+      fetchImpl(url, options) {
+        assert.notEqual(options.method, "POST");
+        return response([{ title: "Movie", titleSlug: "movie" }]);
+      }
+    });
+    await harness.send({
+      type: "ADB_LOOKUP",
+      service: "radarr",
+      media: { title: "Movie", mediaType: "movie" }
+    });
+    assert.equal(harness.requests.some((request) => request.options.method === "POST"), false);
+  });
+});
+
+test("magnet and active result URLs fall back to the configured search page", async () => {
+  const harness = createHarness({
+    settings: { prowlarrBaseUrl: "http://127.0.0.1:9696" }
+  });
+
+  for (const infoUrl of ["magnet:?xt=urn:btih:abc", "javascript:alert(1)"]) {
+    const result = await harness.send({
+      type: "ADB_OPEN_RESULT",
+      service: "prowlarr",
+      media: { title: "Movie", year: 2024 },
+      result: { title: "Movie.2024", infoUrl, searchTerm: "Movie 2024" }
+    });
+
+    assert.equal(new URL(result.openedUrl).pathname, "/search");
+    assert.equal(new URL(result.openedUrl).searchParams.get("query"), "Movie 2024");
+  }
 });

@@ -8,16 +8,24 @@
  */
 const path = require("path");
 const fs = require("fs");
+const os = require("os");
 const puppeteer = require("puppeteer-core");
 
 const REPO = path.resolve(__dirname, "..");
 const EXT_DIR = path.join(REPO, "altyazidb-arr-bridge-chrome-0.1.1");
-const OUT_DIR = path.join("C:", "Users", "Mert", "Desktop");
+const OUT_DIR = process.env.ADB_E2E_ARTIFACT_DIR || os.tmpdir();
 
 const CHROME_CANDIDATES = [
+  process.env.ADB_CHROME_PATH,
+  process.env.CHROME_PATH,
+  process.env.PUPPETEER_EXECUTABLE_PATH,
   "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
   "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
-  process.env["LOCALAPPDATA"] + "\\Google\\Chrome\\Application\\chrome.exe",
+  process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, "Google", "Chrome", "Application", "chrome.exe"),
+  process.env.ProgramFiles && path.join(process.env.ProgramFiles, "Microsoft", "Edge", "Application", "msedge.exe"),
+  "/usr/bin/google-chrome",
+  "/usr/bin/chromium",
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
 ];
 
 const URLS = [
@@ -52,7 +60,7 @@ function findChrome() {
   for (const c of CHROME_CANDIDATES) {
     if (c && fs.existsSync(c)) return c;
   }
-  throw new Error("Could not locate chrome.exe");
+  throw new Error("Could not locate Chrome/Chromium. Set ADB_CHROME_PATH.");
 }
 
 async function waitForInjection(page, timeoutMs = 30000) {
@@ -85,7 +93,7 @@ async function waitForInjection(page, timeoutMs = 30000) {
   console.log("Extension:", EXT_DIR);
 
   const userDataDir = path.join(
-    process.env["TEMP"] || "C:\\Windows\\Temp",
+    os.tmpdir(),
     `adb-e2e-profile-${Date.now()}`,
   );
   const browser = await puppeteer.launch({
@@ -203,7 +211,7 @@ async function waitForInjection(page, timeoutMs = 30000) {
         });
       }).catch(() => {});
       // Give the retry loop time
-      const snap = await waitForInjection(page, 28000);
+      const snap = await waitForInjection(page, target.expectButtons ? 28000 : 1200);
       // Dump mount-candidate info if shell absent
       if (!snap?.shell) {
         const diag = await page.evaluate(() => ({
@@ -249,6 +257,7 @@ async function waitForInjection(page, timeoutMs = 30000) {
     }
   } finally {
     await browser.close();
+    fs.rmSync(userDataDir, { recursive: true, force: true });
   }
 
   console.log("\n==== SUMMARY ====");

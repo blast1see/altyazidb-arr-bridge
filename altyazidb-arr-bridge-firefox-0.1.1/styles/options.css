@@ -196,6 +196,10 @@ button:disabled {
   min-height: 16px;
 }
 
+.api-key-delete {
+  color: var(--danger);
+}
+
 .radio-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
