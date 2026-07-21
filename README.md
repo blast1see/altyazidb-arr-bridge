@@ -13,7 +13,7 @@
 - İsteğe bağlı Prowlarr arama butonu gösterebilir.
 - İsteğe bağlı Jackett arama butonu gösterebilir.
 - Sayfa türü net algılanamazsa Radarr ve Sonarr seçeneklerini birlikte gösterir.
-- AltyaziDB API kullanmaz; açık sayfanın DOM, metadata, JSON-LD, URL ve görünen içerik bilgisini okur.
+- AltyaziDB API kullanmaz; yalnızca detay kartı DOM'u, uygun medya JSON-LD'si, metadata ve URL gibi sayfa düzeyi sinyalleri okur.
 - API anahtarı yoksa bile Radarr/Sonarr/Prowlarr/Jackett arama sayfasını açabilir.
 - API anahtarı varsa lookup, popup sonuçları, bağlantı testi, mevcut kayıt kontrolü ve isteğe bağlı auto-add yapabilir.
 - Hiçbir veriyi bu projeye ait harici bir sunucuya göndermez.
@@ -68,7 +68,7 @@ Auto-add varsayılan olarak kapalıdır ve açıldığında indirme araması ba�
 - Sonarr: `searchForMissingEpisodes: false`
 - Sonarr: `searchForCutoffUnmetEpisodes: false`
 
-API anahtarları sadece yerel tarayıcı depolamasında saklanır. Radarr/Sonarr/Prowlarr anahtarları `X-Api-Key` header'ıyla, Jackett anahtarı kendi API formatına uygun `apikey` query parametresiyle yalnızca ayarladığın servise gönderilir.
+API anahtarları sadece yerel tarayıcı depolamasında saklanır. Radarr/Sonarr/Prowlarr anahtarları `X-Api-Key` header'ıyla, Jackett anahtarı kendi API formatına uygun `apikey` query parametresiyle yalnızca ayarladığın servise gönderilir. Reverse-proxy path prefix'leri korunur ve eklentinin açtığı servis URL'leri aynı prefix içinde kalır. Yönlendirmeler reddedilir; hata metinlerinde anahtarlar redakte edilir. Servis URL'leri kullanıcı/parola içermeyen HTTP/HTTPS adresleri veya `host:port` biçimi olmalıdır.
 
 ### API Anahtarları Nereden Alınır?
 
@@ -138,6 +138,8 @@ Not: İmzasız yerel XPI dosyaları normal Firefox'ta kalıcı kurulum için Moz
 
 Tampermonkey scripti varsayılan olarak yalnızca `localhost` ve `127.0.0.1` bağlantısına izin verir. Arr servislerin farklı hostta çalışıyorsa userscript metadata bölümüne uygun `@connect` satırı ekle.
 
+Chrome, Firefox ve Tampermonkey ayar panelleri kaydedilmiş API anahtarını sayfa DOM'una geri yazmaz. Anahtar alanını boş bırakırsan mevcut değer korunur; `Delete saved API key` kutusu ilgili anahtarı açıkça siler.
+
 ### Paket Oluşturma
 
 PowerShell ile:
@@ -181,7 +183,11 @@ npm run lint
 npm test
 npm run package:verify
 npm run lint:firefox
+npm run test:e2e
+npm audit
 ```
+
+E2E testi `ADB_CHROME_PATH` ile verilen tarayıcıyı veya standart Chrome/Chromium/Edge yollarını kullanır ve geçici profili sonunda siler. Ekran görüntülerini korumak için `ADB_E2E_ARTIFACT_DIR` ayarlanabilir.
 
 Manuel kontrol:
 
@@ -201,7 +207,7 @@ Manuel kontrol:
 - Telemetry yok.
 - AltyaziDB API isteği yok.
 - Bu proje harici bir sunucuya veri göndermez.
-- İstekler yalnızca senin ayarladığın Radarr/Sonarr/Prowlarr/Jackett adreslerine gider.
+- İstekler ve eklentinin açtığı servis sayfaları yalnızca güvenli HTTP/HTTPS adreslerine gider; servis mesajları yapılandırılmış origin'lerle sınırlandırılır.
 
 ### Lisans
 
@@ -216,7 +222,7 @@ MIT. Ayrıntılar için `LICENSE` dosyasına bak.
 - Can show an optional Prowlarr search button.
 - Can show an optional Jackett search button.
 - Shows Radarr and Sonarr choices when the media type cannot be detected reliably.
-- Does not use an AltyaziDB API; it reads only the current page DOM, metadata, JSON-LD, URL, and visible content.
+- Does not use an AltyaziDB API; it reads only scoped detail DOM, eligible media JSON-LD, metadata, and URL-level signals.
 - Works without API keys by opening the best local Arr search page.
 - With API keys, it can perform lookups, popup results, connection tests, existing-item checks, and optional auto-add.
 - Does not send data to any external server owned by this project.
@@ -271,7 +277,7 @@ Auto-add is disabled by default and does not start an immediate download search:
 - Sonarr: `searchForMissingEpisodes: false`
 - Sonarr: `searchForCutoffUnmetEpisodes: false`
 
-API keys are stored only in local browser storage. Radarr/Sonarr/Prowlarr keys are sent as `X-Api-Key`; Jackett uses its `apikey` query parameter. Each key is sent only to its configured service.
+API keys are stored only in local browser storage. Radarr/Sonarr/Prowlarr keys are sent as `X-Api-Key`; Jackett uses its `apikey` query parameter. Each key is sent only to its configured service. Reverse-proxy path prefixes are preserved, and service URLs opened by the extension stay inside the configured prefix. Redirects are rejected and keys are redacted from error details. Service URLs must be credential-free HTTP/HTTPS URLs or `host:port` values.
 
 ### Getting API Keys
 
@@ -341,6 +347,8 @@ Note: Unsigned local XPI files may require Mozilla signing for permanent install
 
 The userscript allows only `localhost` and `127.0.0.1` by default. Add a matching `@connect` metadata entry if your Arr services run on another host.
 
+The Chrome, Firefox, and Tampermonkey settings panels never write a saved API key back into the page DOM. Leaving a key field blank preserves its saved value; the `Delete saved API key` checkbox explicitly clears it.
+
 ### Packaging
 
 Run from PowerShell:
@@ -384,7 +392,11 @@ npm run lint
 npm test
 npm run package:verify
 npm run lint:firefox
+npm run test:e2e
+npm audit
 ```
+
+The E2E test uses `ADB_CHROME_PATH` or standard Chrome/Chromium/Edge locations and always removes its temporary profile. Set `ADB_E2E_ARTIFACT_DIR` to keep screenshots.
 
 Manual checks:
 
@@ -404,7 +416,7 @@ Manual checks:
 - No telemetry.
 - No AltyaziDB API calls.
 - No data is sent to an external server owned by this project.
-- Requests go only to your configured Radarr/Sonarr/Prowlarr/Jackett URLs.
+- Requests and service tabs are limited to safe HTTP/HTTPS URLs; extension open-URL messages are restricted to configured service origins.
 
 ### License
 

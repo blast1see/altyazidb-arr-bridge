@@ -30,6 +30,9 @@
     jackett: "Jackett"
   };
 
+  const SUBTITLE_PATH_RE = /^\/(?:film|dizi|anime-filmleri|anime-dizileri|animasyon-filmleri|animasyon-dizileri|asya-filmleri|asya-dizileri|belgesel-filmleri|belgesel-dizileri|tv-programlari)\//i;
+  const NON_SUBTITLE_PATH_RE = /^\/(?:forum|user|uploads|engine|index(?:\.php|\.html)?|search|page|lastnews|allnews|tags|stats|statistics|(?:register|login|lostpassword|autobackup)(?:\.php|\.html)?|admin(?:\.php)?)(?:\/|$|\?)/i;
+
   function stripArrSuffix(title) {
     return String(title || "")
       .replace(/\s+(?:\u00bb|\||-)\s+AltyaziDb.*$/i, "")
@@ -45,20 +48,37 @@
   }
 
   function normalizeBaseUrl(value, fallback) {
-    const raw = normalizeSpace(value || fallback || "").replace(/\/+$/, "");
+    const raw = String(value ?? fallback ?? "").trim().replace(/\/+$/, "");
 
     if (!raw) {
       return "";
     }
 
     try {
+      const hostPort = /^(?:\[[^\]]+]|[^:/?#]+):\d+(?:[/?#]|$)/.test(raw);
+      const explicitScheme = /^[a-z][a-z\d+.-]*:/i.test(raw);
+
+      if (explicitScheme && !/^https?:\/\//i.test(raw) && !hostPort) {
+        return "";
+      }
+
       const withProtocol = /^https?:\/\//i.test(raw) ? raw : `http://${raw}`;
       const parsed = new URL(withProtocol);
+
+      if (
+        !["http:", "https:"].includes(parsed.protocol) ||
+        !parsed.hostname ||
+        parsed.username ||
+        parsed.password
+      ) {
+        return "";
+      }
+
       parsed.hash = "";
       parsed.search = "";
       return parsed.toString().replace(/\/+$/, "");
     } catch (_error) {
-      return raw;
+      return "";
     }
   }
 
@@ -94,6 +114,35 @@
     }
   }
 
+  function configuredServiceUrl(settings, service, value) {
+    const safeUrl = safeHttpUrl(value);
+
+    if (!safeUrl || !["radarr", "sonarr", "prowlarr", "jackett"].includes(service)) {
+      return "";
+    }
+
+    const baseUrl = normalizeBaseUrl(serviceBaseUrl(settings, service), "");
+
+    if (!baseUrl) {
+      return "";
+    }
+
+    const target = new URL(safeUrl);
+    const base = new URL(baseUrl);
+
+    if (base.origin !== target.origin) {
+      return "";
+    }
+
+    const basePath = base.pathname.replace(/\/+$/, "") || "/";
+    const targetPath = target.pathname.replace(/\/+$/, "") || "/";
+    const staysWithinBasePath = basePath === "/" ||
+      targetPath === basePath ||
+      targetPath.startsWith(`${basePath}/`);
+
+    return staysWithinBasePath ? safeUrl : "";
+  }
+
   function clampInt(value, min, max, fallback) {
     const parsed = Number.parseInt(value, 10);
 
@@ -102,6 +151,47 @@
     }
 
     return Math.min(max, Math.max(min, parsed));
+  }
+
+  function normalizeBoolean(value, fallback) {
+    if (typeof value === "boolean") {
+      return value;
+    }
+
+    if (value === 1 || value === "1") {
+      return true;
+    }
+
+    if (value === 0 || value === "0") {
+      return false;
+    }
+
+    if (typeof value === "string") {
+      const normalized = value.trim().toLowerCase();
+
+      if (["true", "yes", "on"].includes(normalized)) {
+        return true;
+      }
+
+      if (["false", "no", "off"].includes(normalized)) {
+        return false;
+      }
+    }
+
+    return fallback;
+  }
+
+  function normalizePositiveId(value) {
+    if (value === "" || value === null || value === undefined) {
+      return "";
+    }
+
+    const parsed = Number(value);
+    return Number.isInteger(parsed) && parsed > 0 ? String(parsed) : "";
+  }
+
+  function normalizeString(value) {
+    return typeof value === "string" ? value.trim() : "";
   }
 
   function escapeRegExp(value) {
@@ -176,6 +266,96 @@
     }
 
     return titles;
+  }
+
+  function firstYear(values) {
+    for (const value of values || []) {
+      const match = String(value || "").match(/\b(?:18|19|20|21)\d{2}\b/);
+
+      if (match) {
+        return Number(match[0]);
+      }
+    }
+
+    return null;
+  }
+
+  function yearFromSignals({ detailYears = [], jsonLdYears = [], titleValues = [] } = {}) {
+    return firstYear(detailYears) || firstYear(jsonLdYears) || firstYear(titleValues);
+  }
+
+  function extractExternalIds(hrefs = []) {
+    const ids = {
+      imdbId: "",
+      tmdbId: "",
+      tmdbType: "",
+      tvdbId: ""
+    };
+
+    for (const href of hrefs) {
+      let url;
+
+      try {
+        url = new URL(String(href || ""));
+      } catch (_error) {
+        continue;
+      }
+
+      const host = url.hostname.replace(/^www\./, "").toLowerCase();
+      const path = url.pathname;
+
+      if (!ids.imdbId && host === "imdb.com") {
+        const match = path.match(/\/title\/(tt\d{7,10})\b/i);
+
+        if (match) {
+          ids.imdbId = match[1].toLowerCase();
+        }
+      }
+
+      if (!ids.tmdbId && host === "themoviedb.org") {
+        const match = path.match(/\/(movie|tv)\/(\d+)/i);
+
+        if (match) {
+          ids.tmdbType = match[1].toLowerCase();
+          ids.tmdbId = Number(match[2]);
+        }
+      }
+
+      if (!ids.tvdbId && host === "thetvdb.com") {
+        const pathMatch = path.match(/\/(?:dereferrer\/)?(?:series|movies)\/(\d+)/i);
+        const queryId =
+          url.searchParams.get("id") ||
+          url.searchParams.get("seriesid") ||
+          url.searchParams.get("tvdbid");
+
+        if (pathMatch) {
+          ids.tvdbId = Number(pathMatch[1]);
+        } else if (queryId && /^\d+$/.test(queryId)) {
+          ids.tvdbId = Number(queryId);
+        }
+      }
+    }
+
+    return ids;
+  }
+
+  function isBlockedPagePath(pathname) {
+    const path = String(pathname || "/");
+    return path === "/" || NON_SUBTITLE_PATH_RE.test(path);
+  }
+
+  function isLikelyDetailPage(pathname, hasDetailMarker) {
+    const path = String(pathname || "/");
+
+    if (isBlockedPagePath(path)) {
+      return false;
+    }
+
+    if (SUBTITLE_PATH_RE.test(path)) {
+      return Boolean(hasDetailMarker);
+    }
+
+    return Boolean(hasDetailMarker);
   }
 
   function detectSeasonEpisode(pathname, pageTitle) {
@@ -306,9 +486,18 @@
     ].includes(merged.behavior)
       ? merged.behavior
       : DEFAULT_SETTINGS.behavior;
-    merged.sonarrSeasonFolder = merged.sonarrSeasonFolder !== false;
-    merged.showProwlarrButton = merged.showProwlarrButton !== false;
-    merged.showJackettButton = merged.showJackettButton !== false;
+    merged.sonarrSeasonFolder = normalizeBoolean(
+      merged.sonarrSeasonFolder,
+      DEFAULT_SETTINGS.sonarrSeasonFolder
+    );
+    merged.showProwlarrButton = normalizeBoolean(
+      merged.showProwlarrButton,
+      DEFAULT_SETTINGS.showProwlarrButton
+    );
+    merged.showJackettButton = normalizeBoolean(
+      merged.showJackettButton,
+      DEFAULT_SETTINGS.showJackettButton
+    );
     merged.prowlarrLimit = clampInt(
       merged.prowlarrLimit,
       1,
@@ -322,6 +511,22 @@
       DEFAULT_SETTINGS.jackettLimit
     );
     merged.jackettIndexer = normalizeSpace(merged.jackettIndexer) || "all";
+    merged.radarrMinimumAvailability = ["released", "inCinemas", "announced"]
+      .includes(merged.radarrMinimumAvailability)
+      ? merged.radarrMinimumAvailability
+      : DEFAULT_SETTINGS.radarrMinimumAvailability;
+    merged.sonarrSeriesType = ["standard", "anime", "daily"]
+      .includes(merged.sonarrSeriesType)
+      ? merged.sonarrSeriesType
+      : DEFAULT_SETTINGS.sonarrSeriesType;
+    merged.radarrQualityProfileId = normalizePositiveId(merged.radarrQualityProfileId);
+    merged.sonarrQualityProfileId = normalizePositiveId(merged.sonarrQualityProfileId);
+    merged.radarrRootFolderPath = normalizeString(merged.radarrRootFolderPath);
+    merged.sonarrRootFolderPath = normalizeString(merged.sonarrRootFolderPath);
+    merged.radarrApiKey = normalizeString(merged.radarrApiKey);
+    merged.sonarrApiKey = normalizeString(merged.sonarrApiKey);
+    merged.prowlarrApiKey = normalizeString(merged.prowlarrApiKey);
+    merged.jackettApiKey = normalizeString(merged.jackettApiKey);
 
     return merged;
   }
@@ -659,9 +864,14 @@
     normalizeBaseUrl,
     hostPermissionPattern,
     safeHttpUrl,
+    configuredServiceUrl,
     mergeSettings,
     cleanReleaseSearchTitle,
     uniqueSearchTitles,
+    yearFromSignals,
+    extractExternalIds,
+    isBlockedPagePath,
+    isLikelyDetailPage,
     detectSeasonEpisode,
     detectMediaType,
     getSearchTitle,
