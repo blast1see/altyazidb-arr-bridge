@@ -31,16 +31,20 @@
   const ROOT_ID = "altyazidb-arr-bridge-tm";
   const SETTINGS_KEY = "adbArrBridgeSettings";
   const DETAIL_SELECTOR = [
-    ".movie-info-card",
     ".v2-detail-title",
     ".v2-movie-title-row",
     ".fs-action-row",
-    ".fs-meta-list",
     "#film-tepesi",
     ".sub-page-only",
     "#altyazi-merkezi",
     "#altyazi-tablosu-alani"
   ].join(", ");
+  const MEDIA_INFO_SELECTORS = [
+    ".movie-info-card",
+    "#film-tepesi",
+    ".v2-movie-title-row",
+    ".fs-meta-list"
+  ];
   const MOUNT_SELECTORS = [
     ".fs-action-row",
     ".v2-movie-title-row",
@@ -49,8 +53,15 @@
     "#film-tepesi",
     "#dle-content"
   ];
+  const NOISE_SELECTOR = [
+    "#altyazi-merkezi",
+    "#altyazi-tablosu-alani",
+    ".comments",
+    ".comment",
+    "[class*='comment']"
+  ].join(", ");
   const SUBTITLE_PATH_RE = /^\/(?:film|dizi|anime-filmleri|anime-dizileri|animasyon-filmleri|animasyon-dizileri|asya-filmleri|asya-dizileri|belgesel-filmleri|belgesel-dizileri|tv-programlari)\//i;
-  const NON_SUBTITLE_PATH_RE = /^\/(?:forum|user|uploads|engine|index\.php|search|page|lastnews|allnews|tags|stats|statistics|register|login|lostpassword|autobackup|admin|index)(?:\/|$)/i;
+  const NON_SUBTITLE_PATH_RE = /^\/(?:forum|user|uploads|engine|index(?:\.php|\.html)?|search|page|lastnews|allnews|tags|stats|statistics|(?:register|login|lostpassword|autobackup)(?:\.php|\.html)?|admin(?:\.php)?)(?:\/|$|\?)/i;
 
   const DEFAULT_SETTINGS = {
     radarrBaseUrl: "http://127.0.0.1:7878",
@@ -285,20 +296,37 @@
   }
 
   function normalizeBaseUrl(value, fallback) {
-    const raw = normalizeSpace(value || fallback || "").replace(/\/+$/, "");
+    const raw = String(value ?? fallback ?? "").trim().replace(/\/+$/, "");
 
     if (!raw) {
       return "";
     }
 
     try {
+      const hostPort = /^(?:\[[^\]]+]|[^:/?#]+):\d+(?:[/?#]|$)/.test(raw);
+      const explicitScheme = /^[a-z][a-z\d+.-]*:/i.test(raw);
+
+      if (explicitScheme && !/^https?:\/\//i.test(raw) && !hostPort) {
+        return "";
+      }
+
       const withProtocol = /^https?:\/\//i.test(raw) ? raw : `http://${raw}`;
       const parsed = new URL(withProtocol);
+
+      if (
+        !["http:", "https:"].includes(parsed.protocol) ||
+        !parsed.hostname ||
+        parsed.username ||
+        parsed.password
+      ) {
+        return "";
+      }
+
       parsed.hash = "";
       parsed.search = "";
       return parsed.toString().replace(/\/+$/, "");
     } catch (_error) {
-      return raw;
+      return "";
     }
   }
 
@@ -330,6 +358,30 @@
     return Math.min(max, Math.max(min, parsed));
   }
 
+  function normalizeBoolean(value, fallback) {
+    if (typeof value === "boolean") return value;
+    if (value === 1 || value === "1") return true;
+    if (value === 0 || value === "0") return false;
+
+    if (typeof value === "string") {
+      const normalized = value.trim().toLowerCase();
+      if (["true", "yes", "on"].includes(normalized)) return true;
+      if (["false", "no", "off"].includes(normalized)) return false;
+    }
+
+    return fallback;
+  }
+
+  function normalizePositiveId(value) {
+    if (value === "" || value === null || value === undefined) return "";
+    const parsed = Number(value);
+    return Number.isInteger(parsed) && parsed > 0 ? String(parsed) : "";
+  }
+
+  function normalizeString(value) {
+    return typeof value === "string" ? value.trim() : "";
+  }
+
   function mergeSettings(settings) {
     const merged = {
       ...DEFAULT_SETTINGS,
@@ -343,9 +395,9 @@
     merged.behavior = ["openSearchPage", "showPopupResults", "autoAdd"].includes(merged.behavior)
       ? merged.behavior
       : DEFAULT_SETTINGS.behavior;
-    merged.showProwlarrButton = merged.showProwlarrButton !== false;
-    merged.showJackettButton = merged.showJackettButton !== false;
-    merged.sonarrSeasonFolder = merged.sonarrSeasonFolder !== false;
+    merged.showProwlarrButton = normalizeBoolean(merged.showProwlarrButton, DEFAULT_SETTINGS.showProwlarrButton);
+    merged.showJackettButton = normalizeBoolean(merged.showJackettButton, DEFAULT_SETTINGS.showJackettButton);
+    merged.sonarrSeasonFolder = normalizeBoolean(merged.sonarrSeasonFolder, DEFAULT_SETTINGS.sonarrSeasonFolder);
     merged.prowlarrLimit = clampInt(
       merged.prowlarrLimit,
       1,
@@ -359,6 +411,20 @@
       DEFAULT_SETTINGS.jackettLimit
     );
     merged.jackettIndexer = normalizeSpace(merged.jackettIndexer || "") || DEFAULT_SETTINGS.jackettIndexer;
+    merged.radarrApiKey = normalizeString(merged.radarrApiKey);
+    merged.sonarrApiKey = normalizeString(merged.sonarrApiKey);
+    merged.prowlarrApiKey = normalizeString(merged.prowlarrApiKey);
+    merged.jackettApiKey = normalizeString(merged.jackettApiKey);
+    merged.radarrRootFolderPath = normalizeString(merged.radarrRootFolderPath);
+    merged.sonarrRootFolderPath = normalizeString(merged.sonarrRootFolderPath);
+    merged.radarrQualityProfileId = normalizePositiveId(merged.radarrQualityProfileId);
+    merged.sonarrQualityProfileId = normalizePositiveId(merged.sonarrQualityProfileId);
+    merged.radarrMinimumAvailability = ["announced", "inCinemas", "released"].includes(merged.radarrMinimumAvailability)
+      ? merged.radarrMinimumAvailability
+      : DEFAULT_SETTINGS.radarrMinimumAvailability;
+    merged.sonarrSeriesType = ["standard", "daily", "anime"].includes(merged.sonarrSeriesType)
+      ? merged.sonarrSeriesType
+      : DEFAULT_SETTINGS.sonarrSeriesType;
 
     return merged;
   }
@@ -439,7 +505,11 @@
       return `${label} URL is invalid. Check the configured protocol, host, and port.`;
     }
 
-    return connectionErrorMessage(service, baseUrl);
+    if (/redirect/i.test(message)) {
+      return `${label} redirect was refused. Redirects are not followed; configure the final service URL directly.`;
+    }
+
+    return `${connectionErrorMessage(service, baseUrl)} Redirects are not followed; configure the final service URL directly if this address redirects.`;
   }
 
   function escapeRegExp(value) {
@@ -758,12 +828,31 @@
   }
 
   function openUrl(url) {
-    if (typeof GM_openInTab === "function") {
-      GM_openInTab(url, { active: true, insert: true });
-      return;
+    const safeUrl = safeHttpUrl(url);
+
+    if (!safeUrl) {
+      return false;
     }
 
-    window.open(url, "_blank", "noopener,noreferrer");
+    if (typeof GM_openInTab === "function") {
+      GM_openInTab(safeUrl, { active: true, insert: true });
+      return true;
+    }
+
+    window.open(safeUrl, "_blank", "noopener,noreferrer");
+    return true;
+  }
+
+  function redactSensitive(value, apiKey = "") {
+    let redacted = String(value || "");
+
+    if (apiKey) {
+      for (const secret of [apiKey, encodeURIComponent(apiKey)]) {
+        redacted = redacted.split(secret).join("[REDACTED]");
+      }
+    }
+
+    return redacted.replace(/(apikey\s*[=:]\s*)[^&\s<>'"]+/gi, "$1[REDACTED]");
   }
 
   function gmRequest({ method = "GET", url, headers = {}, body = null, timeout = 10000 }) {
@@ -771,6 +860,7 @@
       GM_xmlhttpRequest({
         method,
         url,
+        redirect: "error",
         headers,
         data: body ? JSON.stringify(body) : undefined,
         timeout,
@@ -790,6 +880,13 @@
 
     if (requireKey && !apiKey) {
       throw new ArrBridgeError("missingKey", `${label} API key missing`);
+    }
+
+    if (!normalizeBaseUrl(baseUrl, "")) {
+      throw new ArrBridgeError(
+        "invalidUrl",
+        `${label} URL is invalid. Check the configured protocol, host, and port.`
+      );
     }
 
     // Jackett authenticates via ?apikey= query parameter rather than X-Api-Key header.
@@ -819,26 +916,45 @@
       throw new ArrBridgeError("connect", requestFailureMessage(service, baseUrl, error));
     }
 
+    if (response.finalUrl) {
+      try {
+        if (new URL(response.finalUrl).origin !== new URL(url).origin) {
+          throw new ArrBridgeError("redirect", `${label} redirected to a different origin`);
+        }
+      } catch (error) {
+        if (error instanceof ArrBridgeError) throw error;
+      }
+    }
+
     if (response.status === 401 || response.status === 403) {
       throw new ArrBridgeError("auth", `${label} API key rejected`);
     }
 
     if (response.status < 200 || response.status >= 300) {
-      const detail = normalizeSpace(response.responseText || "").slice(0, 180);
+      const detail = normalizeSpace(redactSensitive(response.responseText, apiKey)).slice(0, 180);
       throw new ArrBridgeError(
         "api",
         `${label} API request failed (${response.status})${detail ? `: ${detail}` : ""}`
       );
     }
 
-    if (response.status === 204 || !response.responseText) {
+    if (response.status === 204) {
       return null;
+    }
+
+    if (!response.responseText) {
+      if (options.responseType === "text") return "";
+      throw new ArrBridgeError("invalidResponse", `${label} returned invalid JSON`);
+    }
+
+    if (options.responseType === "text") {
+      return response.responseText;
     }
 
     try {
       return JSON.parse(response.responseText);
     } catch (_error) {
-      return response.responseText;
+      throw new ArrBridgeError("invalidResponse", `${label} returned invalid JSON`);
     }
   }
 
@@ -907,21 +1023,23 @@
   }
 
   async function findExisting(service, settings, result) {
-    try {
-      if (service === "radarr" && result?.tmdbId) {
-        const data = await callArrApi(service, settings, "/api/v3/movie", { tmdbId: result.tmdbId });
-        return normalizeResults(data)[0] || null;
-      }
+    if (service === "radarr" && result?.tmdbId) {
+      const data = await callArrApi(service, settings, "/api/v3/movie", { tmdbId: result.tmdbId });
+      return normalizeResults(data)[0] || null;
+    }
 
-      if (service === "sonarr" && result?.tvdbId) {
-        const data = await callArrApi(service, settings, "/api/v3/series", { tvdbId: result.tvdbId });
-        return normalizeResults(data)[0] || null;
-      }
-    } catch (_error) {
-      return null;
+    if (service === "sonarr" && result?.tvdbId) {
+      const data = await callArrApi(service, settings, "/api/v3/series", { tvdbId: result.tvdbId });
+      return normalizeResults(data)[0] || null;
     }
 
     return null;
+  }
+
+  function existingIdentity(service, result) {
+    if (service === "radarr" && result?.tmdbId) return `tmdb:${Number(result.tmdbId)}`;
+    if (service === "sonarr" && result?.tvdbId) return `tvdb:${Number(result.tvdbId)}`;
+    return "";
   }
 
   function summarizeResult(result) {
@@ -999,8 +1117,11 @@ async function lookupArr(service, media, settings) {
     (service === "radarr" && media?.tmdbId && media?.tmdbType !== "tv") ||
     (service === "sonarr" && media?.tvdbId);
 
+  let checkedExistingIdentity = "";
+
   if (settings.behavior !== "showPopupResults" && canCheckExisting) {
     const existing = await findExisting(service, settings, media);
+    checkedExistingIdentity = existingIdentity(service, media);
     const existingUrl = buildDetailPageUrl(baseUrl, service, existing);
 
     if (existingUrl) {
@@ -1041,10 +1162,12 @@ async function lookupArr(service, media, settings) {
     }
 
     if (settings.behavior === "autoAdd") {
-      return addResult(service, media, best, settings, fallbackUrl);
+      return addResult(service, media, best, settings, fallbackUrl, checkedExistingIdentity);
     }
 
-    const existing = await findExisting(service, settings, best);
+    const existing = checkedExistingIdentity === existingIdentity(service, best)
+      ? null
+      : await findExisting(service, settings, best);
     const existingUrl = buildDetailPageUrl(baseUrl, service, existing);
 
     if (existingUrl) {
@@ -1111,7 +1234,10 @@ async function lookupArr(service, media, settings) {
 
     for (const plan of plans) {
       const data = await callArrApi("prowlarr", settings, plan.apiPath, plan.apiParams);
-      releases = normalizeResults(data);
+      if (!Array.isArray(data)) {
+        throw new ArrBridgeError("invalidResponse", "Prowlarr returned an invalid response");
+      }
+      releases = data;
       activePlan = plan;
 
       if (releases.length) {
@@ -1192,7 +1318,10 @@ async function lookupArr(service, media, settings) {
 
     for (const plan of plans) {
       const data = await callArrApi("jackett", settings, apiPath, plan.apiParams);
-      rawResults = Array.isArray(data?.Results) ? data.Results : [];
+      if (!data || !Array.isArray(data.Results)) {
+        throw new ArrBridgeError("invalidResponse", "Jackett returned an invalid response");
+      }
+      rawResults = data.Results;
       activePlan = plan;
 
       if (rawResults.length) {
@@ -1240,9 +1369,30 @@ async function lookupArr(service, media, settings) {
     };
   }
 
-  async function addResult(service, media, result, settings, fallbackUrl) {
+  async function addResult(service, media, result, settings, fallbackUrl, checkedExistingIdentity = "") {
     const label = serviceLabel(service);
-    const existing = await findExisting(service, settings, result);
+
+    if (service === "radarr") {
+      if (!settings.radarrRootFolderPath || !settings.radarrQualityProfileId) {
+        return {
+          ok: false,
+          service,
+          error: "Radarr auto-add requires a root folder and quality profile",
+          fallbackUrl
+        };
+      }
+    } else if (!settings.sonarrRootFolderPath || !settings.sonarrQualityProfileId) {
+      return {
+        ok: false,
+        service,
+        error: "Sonarr auto-add requires a root folder and quality profile",
+        fallbackUrl
+      };
+    }
+
+    const existing = checkedExistingIdentity === existingIdentity(service, result)
+      ? null
+      : await findExisting(service, settings, result);
     const existingUrl = buildDetailPageUrl(serviceBaseUrl(settings, service), service, existing);
 
     if (existingUrl) {
@@ -1257,15 +1407,6 @@ async function lookupArr(service, media, settings) {
     }
 
     if (service === "radarr") {
-      if (!settings.radarrRootFolderPath || !settings.radarrQualityProfileId) {
-        return {
-          ok: false,
-          service,
-          error: "Radarr auto-add requires a root folder and quality profile",
-          fallbackUrl
-        };
-      }
-
       const payload = {
         ...result,
         qualityProfileId: Number(settings.radarrQualityProfileId),
@@ -1284,9 +1425,7 @@ async function lookupArr(service, media, settings) {
       });
       const detailUrl = buildDetailPageUrl(serviceBaseUrl(settings, service), service, added);
 
-      if (detailUrl) {
-        openUrl(detailUrl);
-      }
+      if (detailUrl) openUrl(detailUrl);
 
       return {
         ok: true,
@@ -1294,15 +1433,6 @@ async function lookupArr(service, media, settings) {
         opened: !!detailUrl,
         openedUrl: detailUrl,
         message: "Added movie to Radarr without starting a search."
-      };
-    }
-
-    if (!settings.sonarrRootFolderPath || !settings.sonarrQualityProfileId) {
-      return {
-        ok: false,
-        service,
-        error: "Sonarr auto-add requires a root folder and quality profile",
-        fallbackUrl
       };
     }
 
@@ -1394,7 +1524,9 @@ async function lookupArr(service, media, settings) {
   async function testConnection(service, settings) {
     try {
       const { path, params } = statusPath(service);
-      await callArrApi(service, settings, path, params);
+      await callArrApi(service, settings, path, params, {
+        responseType: service === "jackett" ? "text" : "json"
+      });
       return {
         ok: true,
         service,
@@ -1446,13 +1578,34 @@ async function lookupArr(service, media, settings) {
     return normalizeSpace(document.querySelector(selector)?.getAttribute("content") || "");
   }
 
+  function mediaInfoRoots() {
+    return MEDIA_INFO_SELECTORS
+      .map((selector) => document.querySelector(selector))
+      .filter((node, index, nodes) => node && nodes.indexOf(node) === index);
+  }
+
   function createPageSnapshot() {
-    return {
-      bodyText: normalizeSpace(document.body?.innerText || document.documentElement.innerText || ""),
-      html: document.documentElement.innerHTML || "",
-      hrefs: Array.from(document.querySelectorAll("a[href]"), (link) => link.href),
-      jsonLd: readJsonLd()
-    };
+    const roots = mediaInfoRoots();
+    const hrefs = [];
+    const detailYears = [];
+
+    for (const root of roots) {
+      for (const link of root.querySelectorAll("a[href]")) hrefs.push(link.href);
+      for (const link of root.querySelectorAll('a[href*="/xfsearch/year/"], a[href*="/year/"]')) {
+        detailYears.push(link.textContent || "");
+      }
+    }
+
+    for (const link of document.querySelectorAll([
+      'a[href*="imdb.com/title/"]',
+      'a[href*="themoviedb.org/movie/"]',
+      'a[href*="themoviedb.org/tv/"]',
+      'a[href*="thetvdb.com/"]'
+    ].join(", "))) {
+      if (!link.closest(NOISE_SELECTOR)) hrefs.push(link.href);
+    }
+
+    return { hrefs: [...new Set(hrefs)], detailYears, jsonLd: readJsonLd() };
   }
 
   function stripSiteTitle(value) {
@@ -1495,7 +1648,10 @@ async function lookupArr(service, media, settings) {
     const signals = {
       breadcrumbNames: [],
       breadcrumbUrls: [],
-      schemaTypes: []
+      schemaTypes: [],
+      mediaNames: [],
+      mediaYears: [],
+      externalUrls: []
     };
 
     for (const node of nodes) {
@@ -1506,6 +1662,20 @@ async function lookupArr(service, media, settings) {
           signals.schemaTypes.push(type);
         } else if (Array.isArray(type)) {
           signals.schemaTypes.push(...type);
+        }
+
+        const types = (Array.isArray(type) ? type : [type])
+          .filter(Boolean)
+          .map((value) => String(value).toLowerCase());
+        const isMedia = types.some((value) =>
+          ["movie", "tvseries", "tvepisode", "tvseason"].includes(value)
+        );
+
+        if (isMedia) {
+          if (item.name) signals.mediaNames.push(normalizeSpace(item.name));
+          if (item.datePublished) signals.mediaYears.push(String(item.datePublished));
+          const external = Array.isArray(item.sameAs) ? item.sameAs : [item.sameAs];
+          signals.externalUrls.push(...external.filter(Boolean).map(String));
         }
 
         if (item.itemListElement && Array.isArray(item.itemListElement)) {
@@ -1529,8 +1699,8 @@ async function lookupArr(service, media, settings) {
     return signals;
   }
 
-  function labelValue(labelRegex) {
-    for (const strong of document.querySelectorAll("strong")) {
+  function labelValue(labelRegex, roots = mediaInfoRoots()) {
+    for (const strong of roots.flatMap((root) => Array.from(root.querySelectorAll("strong")))) {
       const label = normalizeSpace(strong.textContent || "");
 
       if (!labelRegex.test(label)) {
@@ -1564,43 +1734,26 @@ async function lookupArr(service, media, settings) {
     return style.display !== "none" && style.visibility !== "hidden";
   }
 
-  function allPageText(snapshot) {
-    return snapshot?.bodyText ||
-      normalizeSpace(document.body?.innerText || document.documentElement.innerText || "");
-  }
-
-  function pageHtml(snapshot) {
-    return snapshot?.html || document.documentElement.innerHTML || "";
-  }
-
-  function findYear(snapshot) {
-    const yearLink =
-      document.querySelector('a[href*="/xfsearch/year/"]') ||
-      document.querySelector('a[href*="/year/"]');
-
-    const linkYear = yearLink?.textContent?.match(/\b(19|20)\d{2}\b/);
-
-    if (linkYear) {
-      return Number(linkYear[0]);
+  function firstYear(values) {
+    for (const value of values || []) {
+      const match = String(value || "").match(/\b(19|20)\d{2}\b/);
+      if (match) return Number(match[0]);
     }
+    return null;
+  }
 
-    const metaYear = [
-      meta('meta[property="article:published_time"]'),
-      meta('meta[name="date"]'),
+  function findYear(snapshot, signals) {
+    return firstYear([
+      ...(snapshot?.detailYears || []),
+      labelValue(/^(?:y\u0131l|yap\u0131m y\u0131l\u0131|year)$/i)
+    ]) || firstYear(signals?.mediaYears || []) || firstYear([
       meta('meta[property="og:title"]'),
+      meta('meta[property="twitter:title"]'),
       document.title
-    ].join(" ");
-    const titleYear = metaYear.match(/\b(19|20)\d{2}\b/);
-
-    if (titleYear) {
-      return Number(titleYear[0]);
-    }
-
-    const bodyYear = allPageText(snapshot).match(/\b(19|20)\d{2}\b/);
-    return bodyYear ? Number(bodyYear[0]) : null;
+    ]);
   }
 
-  function extractIdsFromLinks(snapshot) {
+  function extractIdsFromLinks(snapshot, signals) {
     const ids = {
       imdbId: "",
       tmdbId: "",
@@ -1608,8 +1761,7 @@ async function lookupArr(service, media, settings) {
       tvdbId: ""
     };
 
-    const hrefs = snapshot?.hrefs || Array.from(document.querySelectorAll("a[href]"), (link) => link.href);
-    const html = pageHtml(snapshot);
+    const hrefs = [...(snapshot?.hrefs || []), ...(signals?.externalUrls || [])];
 
     for (const href of hrefs) {
       let url;
@@ -1626,7 +1778,7 @@ async function lookupArr(service, media, settings) {
       if (host === "imdb.com") {
         const imdbPathMatch = path.match(/\/title\/(tt\d{7,10})\b/i);
 
-        if (imdbPathMatch) {
+        if (!ids.imdbId && imdbPathMatch) {
           ids.imdbId = imdbPathMatch[1].toLowerCase();
         }
       }
@@ -1634,7 +1786,7 @@ async function lookupArr(service, media, settings) {
       if (host === "themoviedb.org") {
         const tmdbMatch = path.match(/\/(movie|tv)\/(\d+)/i);
 
-        if (tmdbMatch) {
+        if (!ids.tmdbId && tmdbMatch) {
           ids.tmdbType = tmdbMatch[1].toLowerCase();
           ids.tmdbId = Number(tmdbMatch[2]);
         }
@@ -1647,26 +1799,12 @@ async function lookupArr(service, media, settings) {
           url.searchParams.get("seriesid") ||
           url.searchParams.get("tvdbid");
 
-        if (pathMatch) {
+        if (!ids.tvdbId && pathMatch) {
           ids.tvdbId = Number(pathMatch[1]);
-        } else if (queryId && /^\d+$/.test(queryId)) {
+        } else if (!ids.tvdbId && queryId && /^\d+$/.test(queryId)) {
           ids.tvdbId = Number(queryId);
         }
       }
-    }
-
-    if (!ids.imdbId) {
-      const imdbHtmlMatch = html.match(/imdb\.com\/title\/(tt\d{7,10})\b/i);
-
-      if (imdbHtmlMatch) {
-        ids.imdbId = imdbHtmlMatch[1].toLowerCase();
-      }
-    }
-
-    const tvdbTextMatch = html.match(/\b(?:tvdb|thetvdb)[^\d]{0,30}(\d{3,})\b/i);
-
-    if (!ids.tvdbId && tvdbTextMatch) {
-      ids.tvdbId = Number(tvdbTextMatch[1]);
     }
 
     return ids;
@@ -1798,17 +1936,18 @@ async function lookupArr(service, media, settings) {
   function extractMedia() {
     const snapshot = createPageSnapshot();
     const signals = jsonLdSignals(snapshot.jsonLd);
-    const ids = extractIdsFromLinks(snapshot);
+    const ids = extractIdsFromLinks(snapshot, signals);
     const rawTitle =
       text(".v2-detail-title") ||
-      text("h1") ||
+      text(".movie-info-card h1") ||
+      signals.mediaNames[0] ||
       meta('meta[property="og:title"]') ||
       meta('meta[property="twitter:title"]') ||
       document.title;
     const seasonEpisode = detectSeasonEpisode(rawTitle);
     const title = stripSiteTitle(rawTitle);
     const originalTitle = labelValue(/orijinal ba\u015fl\u0131k|original title|original name/i) || title;
-    const year = findYear(snapshot);
+    const year = findYear(snapshot, signals);
     const mediaType = detectType(signals, ids, seasonEpisode);
     const releaseTitles = extractReleaseTitles(year);
 
@@ -1853,16 +1992,20 @@ async function lookupArr(service, media, settings) {
     return appendOptional(["radarr", "sonarr"]);
   }
 
-  function isLikelyDetailPage(_media) {
+  function isBlockedPagePath(pathname) {
+    const path = String(pathname || "/");
+    return path === "/" || NON_SUBTITLE_PATH_RE.test(path);
+  }
+
+  function isLikelyDetailPage() {
     const path = window.location.pathname || "/";
 
-    // Hard block known non-subtitle sections (forum, user profiles, search, etc.)
-    if (NON_SUBTITLE_PATH_RE.test(path)) {
+    if (isBlockedPagePath(path)) {
       return false;
     }
 
-    // Only render on AltyaziDB subtitle detail pages.
-    return SUBTITLE_PATH_RE.test(path);
+    const hasDetailMarker = Boolean(document.querySelector(DETAIL_SELECTOR));
+    return SUBTITLE_PATH_RE.test(path) ? hasDetailMarker : hasDetailMarker;
   }
 
   function mountPoint() {
@@ -2478,18 +2621,22 @@ async function lookupArr(service, media, settings) {
   }
 
   async function render() {
-    if (document.getElementById(ROOT_ID)) {
+    const currentUrl = window.location.href;
+    const existingShell = document.getElementById(ROOT_ID);
+
+    if (existingShell?.dataset.sourceUrl === currentUrl) {
       return true;
     }
 
+    existingShell?.remove();
     injectStyles();
+
+    if (!isLikelyDetailPage()) {
+      return false;
+    }
 
     const media = extractMedia();
     const settings = await getSettings();
-
-    if (!isLikelyDetailPage(media)) {
-      return false;
-    }
 
     const services = serviceForMedia(media, settings);
     const shell = document.createElement("div");
@@ -2499,6 +2646,7 @@ async function lookupArr(service, media, settings) {
     shell.id = ROOT_ID;
     shell.className = "adb-tm-shell";
     shell.dataset.mediaType = media.mediaType;
+    shell.dataset.sourceUrl = currentUrl;
     buttonRow.className = "adb-tm-button-row";
     status.className = "adb-tm-status adb-tm-status-neutral";
 
@@ -2549,21 +2697,27 @@ async function lookupArr(service, media, settings) {
     status.className = `adb-tm-options-status ${tone}`.trim();
   }
 
-  function readSettingsForm(root) {
+  function readSettingsForm(root, currentSettings = DEFAULT_SETTINGS) {
     const value = (id) => root.querySelector(`#${id}`)?.value?.trim() || "";
     const checked = (id) => root.querySelector(`#${id}`)?.checked !== false;
+    const isChecked = (id) => root.querySelector(`#${id}`)?.checked === true;
+    const keyValue = (service) => {
+      const prefix = capitalize(service);
+      if (isChecked(`adbClear${prefix}ApiKey`)) return "";
+      return value(`adb${prefix}ApiKey`) || currentSettings[`${service}ApiKey`] || "";
+    };
 
     return mergeSettings({
       radarrBaseUrl: value("adbRadarrBaseUrl"),
-      radarrApiKey: value("adbRadarrApiKey"),
+      radarrApiKey: keyValue("radarr"),
       sonarrBaseUrl: value("adbSonarrBaseUrl"),
-      sonarrApiKey: value("adbSonarrApiKey"),
+      sonarrApiKey: keyValue("sonarr"),
       prowlarrBaseUrl: value("adbProwlarrBaseUrl"),
-      prowlarrApiKey: value("adbProwlarrApiKey"),
+      prowlarrApiKey: keyValue("prowlarr"),
       showProwlarrButton: checked("adbShowProwlarrButton"),
       prowlarrLimit: value("adbProwlarrLimit"),
       jackettBaseUrl: value("adbJackettBaseUrl"),
-      jackettApiKey: value("adbJackettApiKey"),
+      jackettApiKey: keyValue("jackett"),
       jackettIndexer: value("adbJackettIndexer") || DEFAULT_SETTINGS.jackettIndexer,
       jackettLimit: value("adbJackettLimit"),
       showJackettButton: checked("adbShowJackettButton"),
@@ -2614,7 +2768,7 @@ async function lookupArr(service, media, settings) {
     injectStyles();
     document.querySelector(".adb-tm-options-backdrop")?.remove();
 
-    const settings = await getSettings();
+    let settings = await getSettings();
     const backdrop = document.createElement("div");
     backdrop.className = "adb-tm-options-backdrop";
     backdrop.innerHTML = `
@@ -2634,7 +2788,8 @@ async function lookupArr(service, media, settings) {
               <h3>Radarr</h3>
             </div>
             <label>Base URL <input id="adbRadarrBaseUrl" type="url" value="${escapeAttr(settings.radarrBaseUrl)}"></label>
-            <label>API key <input id="adbRadarrApiKey" type="password" autocomplete="off" value="${escapeAttr(settings.radarrApiKey)}"></label>
+            <label>API key <input id="adbRadarrApiKey" type="password" autocomplete="new-password" placeholder="Leave blank to keep the saved key"></label>
+            <label class="adb-tm-checkbox"><input id="adbClearRadarrApiKey" type="checkbox" data-clear-service="radarr"><span>Delete saved API key</span></label>
             <div class="adb-tm-options-row">
               <button type="button" data-test="radarr">Test Radarr</button>
               <button type="button" data-load="radarr">Load folders/profiles</button>
@@ -2661,7 +2816,8 @@ async function lookupArr(service, media, settings) {
               <h3>Sonarr</h3>
             </div>
             <label>Base URL <input id="adbSonarrBaseUrl" type="url" value="${escapeAttr(settings.sonarrBaseUrl)}"></label>
-            <label>API key <input id="adbSonarrApiKey" type="password" autocomplete="off" value="${escapeAttr(settings.sonarrApiKey)}"></label>
+            <label>API key <input id="adbSonarrApiKey" type="password" autocomplete="new-password" placeholder="Leave blank to keep the saved key"></label>
+            <label class="adb-tm-checkbox"><input id="adbClearSonarrApiKey" type="checkbox" data-clear-service="sonarr"><span>Delete saved API key</span></label>
             <div class="adb-tm-options-row">
               <button type="button" data-test="sonarr">Test Sonarr</button>
               <button type="button" data-load="sonarr">Load folders/profiles</button>
@@ -2692,7 +2848,8 @@ async function lookupArr(service, media, settings) {
               <h3>Prowlarr</h3>
             </div>
             <label>Base URL <input id="adbProwlarrBaseUrl" type="url" value="${escapeAttr(settings.prowlarrBaseUrl)}"></label>
-            <label>API key <input id="adbProwlarrApiKey" type="password" autocomplete="off" value="${escapeAttr(settings.prowlarrApiKey)}"></label>
+            <label>API key <input id="adbProwlarrApiKey" type="password" autocomplete="new-password" placeholder="Leave blank to keep the saved key"></label>
+            <label class="adb-tm-checkbox"><input id="adbClearProwlarrApiKey" type="checkbox" data-clear-service="prowlarr"><span>Delete saved API key</span></label>
             <label>Search result limit <input id="adbProwlarrLimit" type="number" min="1" max="100" step="1" value="${escapeAttr(settings.prowlarrLimit)}"></label>
             <label class="adb-tm-checkbox">
               <input id="adbShowProwlarrButton" type="checkbox"${settings.showProwlarrButton !== false ? " checked" : ""}>
@@ -2709,7 +2866,8 @@ async function lookupArr(service, media, settings) {
               <h3>Jackett</h3>
             </div>
             <label>Base URL <input id="adbJackettBaseUrl" type="url" value="${escapeAttr(settings.jackettBaseUrl)}"></label>
-            <label>API key <input id="adbJackettApiKey" type="password" autocomplete="off" value="${escapeAttr(settings.jackettApiKey)}"></label>
+            <label>API key <input id="adbJackettApiKey" type="password" autocomplete="new-password" placeholder="Leave blank to keep the saved key"></label>
+            <label class="adb-tm-checkbox"><input id="adbClearJackettApiKey" type="checkbox" data-clear-service="jackett"><span>Delete saved API key</span></label>
             <label>Indexer id <input id="adbJackettIndexer" type="text" placeholder="all" value="${escapeAttr(settings.jackettIndexer)}"></label>
             <label>Popup result limit <input id="adbJackettLimit" type="number" min="1" max="100" step="1" value="${escapeAttr(settings.jackettLimit)}"></label>
             <label class="adb-tm-checkbox">
@@ -2744,6 +2902,16 @@ async function lookupArr(service, media, settings) {
 
     document.documentElement.append(backdrop);
 
+    for (const clearControl of backdrop.querySelectorAll("[data-clear-service]")) {
+      clearControl.addEventListener("change", () => {
+        const service = clearControl.dataset.clearService;
+        const keyInput = backdrop.querySelector(`#adb${capitalize(service)}ApiKey`);
+
+        if (clearControl.checked) keyInput.value = "";
+        keyInput.disabled = clearControl.checked;
+      });
+    }
+
     backdrop.querySelector("[data-close]").addEventListener("click", () => backdrop.remove());
     backdrop.addEventListener("click", (event) => {
       if (event.target === backdrop) {
@@ -2752,12 +2920,19 @@ async function lookupArr(service, media, settings) {
     });
 
     backdrop.querySelector("[data-save]").addEventListener("click", async () => {
-      await saveSettings(readSettingsForm(backdrop));
+      settings = readSettingsForm(backdrop, settings);
+      await saveSettings(settings);
+      for (const input of backdrop.querySelectorAll('input[id$="ApiKey"]')) {
+        input.value = "";
+        input.disabled = false;
+      }
+      for (const input of backdrop.querySelectorAll('input[id^="adbClear"][id$="ApiKey"]')) input.checked = false;
       setOptionsStatus(backdrop, "Settings saved. Reload the page to refresh buttons.", "success");
     });
 
     backdrop.querySelector("[data-reset]").addEventListener("click", async () => {
       await saveSettings(DEFAULT_SETTINGS);
+      settings = mergeSettings(DEFAULT_SETTINGS);
       setOptionsStatus(backdrop, "Defaults restored. Reopen settings to see defaults.", "warn");
     });
 
@@ -2768,7 +2943,7 @@ async function lookupArr(service, media, settings) {
         setOptionsStatus(backdrop, `Testing ${serviceLabel(service)}...`);
 
         try {
-          const response = await testConnection(service, readSettingsForm(backdrop));
+          const response = await testConnection(service, readSettingsForm(backdrop, settings));
           setOptionsStatus(backdrop, response.ok ? response.message : response.error, response.ok ? "success" : "error");
         } finally {
           button.disabled = false;
@@ -2783,7 +2958,7 @@ async function lookupArr(service, media, settings) {
         setOptionsStatus(backdrop, `Loading ${serviceLabel(service)} folders/profiles...`);
 
         try {
-          const response = await loadChoices(service, readSettingsForm(backdrop));
+          const response = await loadChoices(service, readSettingsForm(backdrop, settings));
 
           if (!response.ok) {
             setOptionsStatus(backdrop, response.error || "Choices could not be loaded", "error");
@@ -2831,6 +3006,11 @@ async function lookupArr(service, media, settings) {
       }
     };
 
+    const scheduleRender = (delay = 150) => {
+      clearTimeout(timer);
+      timer = setTimeout(tryRender, delay);
+    };
+
     const tryRender = () => {
       attempts += 1;
 
@@ -2859,13 +3039,34 @@ async function lookupArr(service, media, settings) {
 
     if (typeof MutationObserver === "function" && document.documentElement) {
       observer = new MutationObserver(() => {
+        const shell = document.getElementById(ROOT_ID);
+
+        if (shell?.dataset.sourceUrl !== window.location.href) {
+          shell?.remove();
+        }
+
+        if (isBlockedPagePath(window.location.pathname)) {
+          attempts = 0;
+          stop();
+          return;
+        }
+
         if (!document.getElementById(ROOT_ID)) {
           attempts = 0;
-          clearTimeout(timer);
-          timer = setTimeout(tryRender, 150);
+          scheduleRender();
         }
       });
       observer.observe(document.documentElement, { childList: true, subtree: true });
+    }
+
+    for (const eventName of ["pageshow", "popstate", "hashchange"]) {
+      window.addEventListener(eventName, () => {
+        document.getElementById(ROOT_ID)?.remove();
+        attempts = 0;
+        if (!isBlockedPagePath(window.location.pathname)) {
+          scheduleRender(0);
+        }
+      });
     }
 
     tryRender();

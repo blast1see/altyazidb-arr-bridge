@@ -2,12 +2,12 @@
 
 ### 1) Optimization Summary
 
-- Current optimization health: acceptable for light personal use, but the codebase has avoidable network round-trips, repeated full-page DOM scans, and substantial duplicated logic between the browser extension and Tampermonkey script.
-- Implementation status: quick-win runtime fixes have been applied to the Chrome/Firefox extension sources and the Tampermonkey script; shared-core generation and package-structure consolidation remain deeper follow-up work.
+- Current optimization health: runtime/network quick wins and mirror-drift guards are implemented; the main remaining cost is duplicated extension/Tampermonkey logic.
+- Implementation status (Unreleased): full-page `innerText`/`innerHTML` parsing, normal-search status preflights, duplicate strong-ID existing checks, unclamped limits, and incomplete Chrome/Firefox mirror verification are resolved. Chrome remains canonical and every non-manifest file is mirrored and byte-checked.
 - Top 3 highest-impact improvements:
   1. Consolidate shared parser/search/API logic so the extension and Tampermonkey script do not drift.
-  2. Replace repeated `innerText` / `innerHTML` full-document scans with one cached page snapshot per render.
-  3. Remove the mandatory Arr `/system/status` preflight from normal searches and reserve it for explicit connection tests.
+  2. Generate the Tampermonkey userscript from reviewed shared modules.
+  3. Replace expanded browser source copies with generated build output in a future major packaging change.
 - Biggest risk if no changes are made: optimization and bug fixes will need to be applied in multiple places, while every keyed lookup keeps paying unnecessary localhost API latency.
 
 ### 2) Findings (Prioritized)
@@ -28,6 +28,8 @@
 
 #### Finding 2: Media detection repeatedly scans full page text and HTML
 
+- **Status**: Resolved in Unreleased. Extraction now uses scoped detail DOM, media JSON-LD, metadata, URL, and trusted external links; subtitle/comment/body/HTML fallbacks were removed.
+
 - **Title**: Media detection repeatedly scans full page text and HTML
 - **Category**: Frontend / CPU / Memory
 - **Severity**: Medium
@@ -41,6 +43,8 @@
 - **Reuse Scope**: module
 
 #### Finding 3: Normal keyed searches perform an avoidable `/system/status` preflight
+
+- **Status**: Resolved. Status/caps calls are used only by explicit connection tests.
 
 - **Title**: Normal keyed searches perform an avoidable `/system/status` preflight
 - **Category**: Network / Reliability / Cost
@@ -56,6 +60,8 @@
 
 #### Finding 4: Existing-item checks happen after remote lookup, wasting work for already-added media
 
+- **Status**: Resolved. Strong IDs are checked first and the checked identity prevents a second request for the same endpoint/ID.
+
 - **Title**: Existing-item checks happen after remote lookup, wasting work for already-added media
 - **Category**: Network / Latency
 - **Severity**: Medium
@@ -69,6 +75,8 @@
 - **Reuse Scope**: service-wide
 
 #### Finding 5: Prowlarr result limit is not clamped outside the UI
+
+- **Status**: Resolved. Stored Prowlarr and Jackett limits normalize to integer `1..100` values.
 
 - **Title**: Prowlarr result limit is not clamped outside the UI
 - **Category**: Network / Memory / Reliability
@@ -98,6 +106,8 @@
 
 #### Finding 7: Expanded Chrome and Firefox package directories duplicate source files
 
+- **Status**: Partially mitigated. Chrome is canonical; the mirror and package verifier cover every non-manifest file. A generated single-core build remains a future architectural change.
+
 - **Title**: Expanded Chrome and Firefox package directories duplicate source files
 - **Category**: Build / Maintainability
 - **Severity**: Medium
@@ -126,11 +136,9 @@
 
 ### 3) Quick Wins (Do First)
 
-- Remove normal-search `/system/status` preflights and keep status calls only for Test Connection.
-- Clamp `prowlarrLimit` in `mergeSettings` to an integer range of `1..100`.
-- Cache a page snapshot during `extractMedia` so `innerText`, `innerHTML`, anchors, and JSON-LD are read once.
-- Short-circuit existing Radarr/Sonarr items before lookup when TMDb/TVDb IDs are already known.
-- Remove `@connect *` from the default Tampermonkey script if localhost-only usage is acceptable.
+- Completed: removed normal-search status preflights, clamped result limits, scoped parser inputs, short-circuited strong-ID existing checks, and kept Tampermonkey `@connect` local-only by default.
+- Completed: rejected redirects, unsafe URL schemes, credential URLs, malformed JSON, and untrusted open-URL messages.
+- Completed: eliminated saved API-key values from Chrome, Firefox, and Tampermonkey settings DOM; blank fields preserve keys and explicit per-service controls delete them.
 
 ### 4) Deeper Optimizations (Do Next)
 

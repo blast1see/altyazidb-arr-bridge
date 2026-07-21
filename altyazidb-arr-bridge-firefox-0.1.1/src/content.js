@@ -3,16 +3,20 @@
   const extensionApi = globalThis.browser || globalThis.chrome;
   const ROOT_ID = "altyazidb-arr-bridge";
   const DETAIL_SELECTOR = [
-    ".movie-info-card",
     ".v2-detail-title",
     ".v2-movie-title-row",
     ".fs-action-row",
-    ".fs-meta-list",
     "#film-tepesi",
     ".sub-page-only",
     "#altyazi-merkezi",
     "#altyazi-tablosu-alani"
   ].join(", ");
+  const MEDIA_INFO_SELECTORS = [
+    ".movie-info-card",
+    "#film-tepesi",
+    ".v2-movie-title-row",
+    ".fs-meta-list"
+  ];
   const MOUNT_SELECTORS = [
     ".fs-action-row",
     ".v2-movie-title-row",
@@ -21,8 +25,13 @@
     "#film-tepesi",
     "#dle-content"
   ];
-  const SUBTITLE_PATH_RE = /^\/(?:film|dizi|anime-filmleri|anime-dizileri|animasyon-filmleri|animasyon-dizileri|asya-filmleri|asya-dizileri|belgesel-filmleri|belgesel-dizileri|tv-programlari)\//i;
-  const NON_SUBTITLE_PATH_RE = /^\/(?:forum|user|uploads|engine|index\.php|search|page|lastnews|allnews|tags|stats|statistics|register|login|lostpassword|autobackup|admin|index)(?:\/|$)/i;
+  const NOISE_SELECTOR = [
+    "#altyazi-merkezi",
+    "#altyazi-tablosu-alani",
+    ".comments",
+    ".comment",
+    "[class*='comment']"
+  ].join(", ");
 
   function sendMessage(message) {
     if (globalThis.browser?.runtime?.sendMessage) {
@@ -65,11 +74,41 @@
     return CFG.normalizeSpace(document.querySelector(selector)?.getAttribute("content") || "");
   }
 
+  function mediaInfoRoots() {
+    return MEDIA_INFO_SELECTORS
+      .map((selector) => document.querySelector(selector))
+      .filter((node, index, nodes) => node && nodes.indexOf(node) === index);
+  }
+
   function createPageSnapshot() {
+    const roots = mediaInfoRoots();
+    const hrefs = [];
+    const detailYears = [];
+
+    for (const root of roots) {
+      for (const link of root.querySelectorAll("a[href]")) {
+        hrefs.push(link.href);
+      }
+
+      for (const link of root.querySelectorAll('a[href*="/xfsearch/year/"], a[href*="/year/"]')) {
+        detailYears.push(link.textContent || "");
+      }
+    }
+
+    for (const link of document.querySelectorAll([
+      'a[href*="imdb.com/title/"]',
+      'a[href*="themoviedb.org/movie/"]',
+      'a[href*="themoviedb.org/tv/"]',
+      'a[href*="thetvdb.com/"]'
+    ].join(", "))) {
+      if (!link.closest(NOISE_SELECTOR)) {
+        hrefs.push(link.href);
+      }
+    }
+
     return {
-      bodyText: CFG.normalizeSpace(document.body?.innerText || document.documentElement.innerText || ""),
-      html: document.documentElement.innerHTML || "",
-      hrefs: Array.from(document.querySelectorAll("a[href]"), (link) => link.href),
+      hrefs: [...new Set(hrefs)],
+      detailYears,
       jsonLd: readJsonLd()
     };
   }
@@ -115,7 +154,10 @@
     const signals = {
       breadcrumbNames: [],
       breadcrumbUrls: [],
-      schemaTypes: []
+      schemaTypes: [],
+      mediaNames: [],
+      mediaYears: [],
+      externalUrls: []
     };
 
     for (const node of nodes) {
@@ -126,6 +168,26 @@
           signals.schemaTypes.push(type);
         } else if (Array.isArray(type)) {
           signals.schemaTypes.push(...type);
+        }
+
+        const types = (Array.isArray(type) ? type : [type])
+          .filter(Boolean)
+          .map((value) => String(value).toLowerCase());
+        const isMedia = types.some((value) =>
+          ["movie", "tvseries", "tvepisode", "tvseason"].includes(value)
+        );
+
+        if (isMedia) {
+          if (item.name) {
+            signals.mediaNames.push(CFG.normalizeSpace(item.name));
+          }
+
+          if (item.datePublished) {
+            signals.mediaYears.push(String(item.datePublished));
+          }
+
+          const external = Array.isArray(item.sameAs) ? item.sameAs : [item.sameAs];
+          signals.externalUrls.push(...external.filter(Boolean).map(String));
         }
 
         if (item.itemListElement && Array.isArray(item.itemListElement)) {
@@ -149,8 +211,8 @@
     return signals;
   }
 
-  function labelValue(labelRegex) {
-    for (const strong of document.querySelectorAll("strong")) {
+  function labelValue(labelRegex, roots = mediaInfoRoots()) {
+    for (const strong of roots.flatMap((root) => Array.from(root.querySelectorAll("strong")))) {
       const label = CFG.normalizeSpace(strong.textContent || "");
 
       if (!labelRegex.test(label)) {
@@ -185,112 +247,26 @@
     return style.display !== "none" && style.visibility !== "hidden";
   }
 
-  function allPageText(snapshot) {
-    return snapshot?.bodyText ||
-      CFG.normalizeSpace(document.body?.innerText || document.documentElement.innerText || "");
-  }
-
-  function pageHtml(snapshot) {
-    return snapshot?.html || document.documentElement.innerHTML || "";
-  }
-
-  function findYear(snapshot) {
-    const yearLink =
-      document.querySelector('a[href*="/xfsearch/year/"]') ||
-      document.querySelector('a[href*="/year/"]');
-
-    const linkYear = yearLink?.textContent?.match(/\b(19|20)\d{2}\b/);
-
-    if (linkYear) {
-      return Number(linkYear[0]);
-    }
-
-    const metaYear = [
-      meta('meta[property="article:published_time"]'),
-      meta('meta[name="date"]'),
+  function findYear(snapshot, signals) {
+    return CFG.yearFromSignals({
+      detailYears: [
+        ...(snapshot?.detailYears || []),
+        labelValue(/^(?:y\u0131l|yap\u0131m y\u0131l\u0131|year)$/i)
+      ],
+      jsonLdYears: signals?.mediaYears || [],
+      titleValues: [
       meta('meta[property="og:title"]'),
+        meta('meta[property="twitter:title"]'),
       document.title
-    ].join(" ");
-    const titleYear = metaYear.match(/\b(19|20)\d{2}\b/);
-
-    if (titleYear) {
-      return Number(titleYear[0]);
-    }
-
-    const bodyYear = allPageText(snapshot).match(/\b(19|20)\d{2}\b/);
-    return bodyYear ? Number(bodyYear[0]) : null;
+      ]
+    });
   }
 
-  function extractIdsFromLinks(snapshot) {
-    const ids = {
-      imdbId: "",
-      tmdbId: "",
-      tmdbType: "",
-      tvdbId: ""
-    };
-
-    const hrefs = snapshot?.hrefs || Array.from(document.querySelectorAll("a[href]"), (link) => link.href);
-    const html = pageHtml(snapshot);
-
-    for (const href of hrefs) {
-      let url;
-
-      try {
-        url = new URL(href);
-      } catch (_error) {
-        continue;
-      }
-
-      const host = url.hostname.replace(/^www\./, "").toLowerCase();
-      const path = url.pathname;
-
-      if (host === "imdb.com") {
-        const imdbPathMatch = path.match(/\/title\/(tt\d{7,10})\b/i);
-
-        if (imdbPathMatch) {
-          ids.imdbId = imdbPathMatch[1].toLowerCase();
-        }
-      }
-
-      if (host === "themoviedb.org") {
-        const tmdbMatch = path.match(/\/(movie|tv)\/(\d+)/i);
-
-        if (tmdbMatch) {
-          ids.tmdbType = tmdbMatch[1].toLowerCase();
-          ids.tmdbId = Number(tmdbMatch[2]);
-        }
-      }
-
-      if (host === "thetvdb.com") {
-        const pathMatch = path.match(/\/(?:dereferrer\/)?(?:series|movies)\/(\d+)/i);
-        const queryId =
-          url.searchParams.get("id") ||
-          url.searchParams.get("seriesid") ||
-          url.searchParams.get("tvdbid");
-
-        if (pathMatch) {
-          ids.tvdbId = Number(pathMatch[1]);
-        } else if (queryId && /^\d+$/.test(queryId)) {
-          ids.tvdbId = Number(queryId);
-        }
-      }
-    }
-
-    if (!ids.imdbId) {
-      const imdbHtmlMatch = html.match(/imdb\.com\/title\/(tt\d{7,10})\b/i);
-
-      if (imdbHtmlMatch) {
-        ids.imdbId = imdbHtmlMatch[1].toLowerCase();
-      }
-    }
-
-    const tvdbTextMatch = html.match(/\b(?:tvdb|thetvdb)[^\d]{0,30}(\d{3,})\b/i);
-
-    if (!ids.tvdbId && tvdbTextMatch) {
-      ids.tvdbId = Number(tvdbTextMatch[1]);
-    }
-
-    return ids;
+  function extractIdsFromLinks(snapshot, signals) {
+    return CFG.extractExternalIds([
+      ...(snapshot?.hrefs || []),
+      ...(signals?.externalUrls || [])
+    ]);
   }
 
   function detectSeasonEpisode(rawTitle) {
@@ -347,10 +323,11 @@
   function extractMedia() {
     const snapshot = createPageSnapshot();
     const signals = jsonLdSignals(snapshot.jsonLd);
-    const ids = extractIdsFromLinks(snapshot);
+    const ids = extractIdsFromLinks(snapshot, signals);
     const rawTitle =
       text(".v2-detail-title") ||
-      text("h1") ||
+      text(".movie-info-card h1") ||
+      signals.mediaNames[0] ||
       meta('meta[property="og:title"]') ||
       meta('meta[property="twitter:title"]') ||
       document.title;
@@ -358,7 +335,7 @@
     const title = stripSiteTitle(rawTitle);
     const originalTitle =
       labelValue(/orijinal ba\u015fl\u0131k|original title|original name/i) || title;
-    const year = findYear(snapshot);
+    const year = findYear(snapshot, signals);
     const mediaType = detectType(signals, ids, seasonEpisode);
     const releaseTitles = extractReleaseTitles(year);
 
@@ -406,16 +383,11 @@
     return appendOptional(["radarr", "sonarr"]);
   }
 
-  function isLikelyDetailPage(_media) {
-    const path = window.location.pathname || "/";
-
-    // Hard block known non-subtitle sections (forum, user profiles, search, etc.)
-    if (NON_SUBTITLE_PATH_RE.test(path)) {
-      return false;
-    }
-
-    // Only render on AltyaziDB subtitle detail pages.
-    return SUBTITLE_PATH_RE.test(path);
+  function isLikelyDetailPage() {
+    return CFG.isLikelyDetailPage(
+      window.location.pathname,
+      Boolean(document.querySelector(DETAIL_SELECTOR))
+    );
   }
 
   function mountPoint() {
@@ -489,7 +461,7 @@
     return button;
   }
 
-  function setStatus(shell, message, tone = "neutral", fallbackUrl = "") {
+  function setStatus(shell, message, tone = "neutral", fallbackUrl = "", fallbackService = "") {
     const status = shell.querySelector(".adb-arr-status");
     status.textContent = message || "";
     status.className = `adb-arr-status adb-arr-status-${tone}`;
@@ -507,7 +479,11 @@
       fallback.className = "adb-arr-link-button";
       fallback.textContent = "Open search";
       fallback.addEventListener("click", () => {
-        sendMessage({ type: "ADB_OPEN_URL", url: fallbackUrl }).catch(() => {});
+        sendMessage({
+          type: "ADB_OPEN_URL",
+          service: fallbackService,
+          url: fallbackUrl
+        }).catch(() => {});
       });
       status.append(fallback);
     }
@@ -679,7 +655,8 @@
         shell,
         response?.error || "No result found",
         response?.opened ? "warn" : "error",
-        response?.opened ? "" : response?.fallbackUrl || ""
+        response?.opened ? "" : response?.fallbackUrl || "",
+        service
       );
     } catch (error) {
       setStatus(shell, error.message || "Unexpected extension error", "error");
@@ -689,16 +666,25 @@
   }
 
   async function render() {
-    if (!extensionApi?.runtime || document.getElementById(ROOT_ID)) {
+    if (!extensionApi?.runtime) {
       return true;
+    }
+
+    const currentUrl = window.location.href;
+    const existingShell = document.getElementById(ROOT_ID);
+
+    if (existingShell?.dataset.sourceUrl === currentUrl) {
+      return true;
+    }
+
+    existingShell?.remove();
+
+    if (!isLikelyDetailPage()) {
+      return false;
     }
 
     const media = extractMedia();
     const settings = CFG.mergeSettings(await storageGet(CFG.DEFAULT_SETTINGS));
-
-    if (!isLikelyDetailPage(media)) {
-      return false;
-    }
 
     const services = serviceForMedia(media, settings);
     const shell = document.createElement("div");
@@ -708,6 +694,7 @@
     shell.id = ROOT_ID;
     shell.className = "adb-arr-shell";
     shell.dataset.mediaType = media.mediaType;
+    shell.dataset.sourceUrl = currentUrl;
     buttonRow.className = "adb-arr-button-row";
     status.className = "adb-arr-status adb-arr-status-neutral";
 
@@ -748,6 +735,11 @@
       }
     };
 
+    const scheduleRender = (delay = 150) => {
+      clearTimeout(timer);
+      timer = setTimeout(tryRender, delay);
+    };
+
     const tryRender = () => {
       attempts += 1;
 
@@ -774,13 +766,34 @@
 
     if (typeof MutationObserver === "function" && document.documentElement) {
       observer = new MutationObserver(() => {
+        const shell = document.getElementById(ROOT_ID);
+
+        if (shell?.dataset.sourceUrl !== window.location.href) {
+          shell?.remove();
+        }
+
+        if (CFG.isBlockedPagePath(window.location.pathname)) {
+          attempts = 0;
+          stop();
+          return;
+        }
+
         if (!document.getElementById(ROOT_ID)) {
           attempts = 0;
-          clearTimeout(timer);
-          timer = setTimeout(tryRender, 150);
+          scheduleRender();
         }
       });
       observer.observe(document.documentElement, { childList: true, subtree: true });
+    }
+
+    for (const eventName of ["pageshow", "popstate", "hashchange"]) {
+      window.addEventListener(eventName, () => {
+        document.getElementById(ROOT_ID)?.remove();
+        attempts = 0;
+        if (!CFG.isBlockedPagePath(window.location.pathname)) {
+          scheduleRender(0);
+        }
+      });
     }
 
     tryRender();
