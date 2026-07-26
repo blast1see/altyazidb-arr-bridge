@@ -1,5 +1,5 @@
 # Legacy troubleshooting helper that enables AllowCORS=true in Jackett.
-# AltyaziDB Arr Bridge v0.1.4 normally does not require this when its
+# AltyaziDB Arr Bridge v0.1.5 normally does not require this when its
 # Firefox/Chrome host permission has been granted.
 
 $ErrorActionPreference = "Stop"
@@ -68,7 +68,7 @@ try {
     Write-Host ("  Status       : HTTP {0}" -f $r.StatusCode)
     if ($r.Headers["Access-Control-Allow-Origin"]) {
         Write-Host ("  ACAO header  : {0}" -f $r.Headers["Access-Control-Allow-Origin"]) -ForegroundColor Green
-        Write-Host "  CORS is enabled. v0.1.4 normally needs only the correct extension host permission." -ForegroundColor Green
+        Write-Host "  CORS is enabled. v0.1.5 normally needs only the correct extension host permission." -ForegroundColor Green
     } else {
         Write-Host "  ACAO header  : MISSING" -ForegroundColor Red
         Write-Host "  Jackett may not have reloaded yet. Wait a few more seconds and retry." -ForegroundColor Yellow
