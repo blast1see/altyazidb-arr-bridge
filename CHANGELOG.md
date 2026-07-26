@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.5 - 2026-07-26
+
 - Restricted service configuration and tab opening to credential-free HTTP/HTTPS URLs and configured service origins and reverse-proxy path prefixes; active schemes and redirects are rejected with explicit guidance.
 - Kept request timeouts active through response-body reads, made JSON response validation strict, and allowed text/XML only for Jackett Torznab `t=caps`.
 - Redacted API keys and `apikey=` values from API failures and manual diagnostics; manual Jackett helpers now accept secrets only through a temporary environment variable.
@@ -11,8 +13,11 @@
 - Prevented duplicate strong-ID existing checks and kept Radarr/Sonarr automatic search flags disabled.
 - Prevented Chrome, Firefox, and Tampermonkey settings from rendering saved API keys into the page DOM; blank key fields preserve saved values and independent explicit controls delete them.
 - Expanded Chrome/Firefox mirroring and verification to every non-manifest source, style, HTML, asset, and fixture file; package versions now come from `package.json`.
+- Restricted release archives to runtime extension files so development fixtures are not distributed.
 - Pinned GitHub Actions revisions to verified full commit SHAs and made Chrome E2E discovery, temporary profiles, artifacts, and negative waits portable.
 - Expanded parser, URL, API, permission, malformed-response, redirect, existing-item, auto-add, release-result, privacy, and mirror tests.
+- Updated the transitive development dependencies `fast-uri` to 3.1.4 and `shell-quote` to 1.9.0 to address their security advisories.
+- Documented that the remaining `web-ext`-only `adm-zip` and `brace-expansion` advisories affect build/development tooling and are not included in distributed extensions or the userscript.
 
 ## 0.1.4
 
