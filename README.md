@@ -150,10 +150,10 @@ PowerShell ile:
 
 Bu komut şunları üretir:
 
-- `altyazidb-arr-bridge-chrome-0.1.4.zip`
-- `altyazidb-arr-bridge-firefox-0.1.4.zip`
-- `altyazidb-arr-bridge-firefox-0.1.4.xpi`
-- `release/altyazidb-arr-bridge-complete-0.1.4.zip`
+- `altyazidb-arr-bridge-chrome-0.1.5.zip`
+- `altyazidb-arr-bridge-firefox-0.1.5.zip`
+- `altyazidb-arr-bridge-firefox-0.1.5.xpi`
+- `release/altyazidb-arr-bridge-complete-0.1.5.zip`
 
 ### Sorun Giderme
 
@@ -161,7 +161,7 @@ Bu komut şunları üretir:
 
 Firefox veya Zen tarayıcıda Test Jackett başarısız oluyorsa şu kontrolleri yap:
 
-1. **Host izni** — v0.1.4, localhost izinlerini tüm portları kapsayacak şekilde tanımlar. LAN adresi veya özel domain kullanıyorsan ayarlar sayfasındaki host izni isteğini kabul et. İzin reddedilirse eklenti bağlantı isteğini göndermeden durur.
+1. **Host izni** — v0.1.5, localhost izinlerini tüm portları kapsayacak şekilde tanımlar. LAN adresi veya özel domain kullanıyorsan ayarlar sayfasındaki host izni isteğini kabul et. İzin reddedilirse eklenti bağlantı isteğini göndermeden durur.
 
 2. **IPv6 tuzağı** — `localhost`, Windows'ta önce `::1` (IPv6) olarak çözümlenir. Jackett varsayılan olarak yalnızca `127.0.0.1` (IPv4) dinler, bu nedenle tarayıcı `[::1]:9117`'ye bağlanmayı dener ve bağlantı reddedilir.
    - **Çözüm A (önerilen):** Base URL alanında `http://127.0.0.1:9117` kullan. v0.1.3 varsayılanı zaten bu.
@@ -171,7 +171,7 @@ Firefox veya Zen tarayıcıda Test Jackett başarısız oluyorsa şu kontrolleri
 
 4. **TLS / yanlış URL / servis kapalı** — HTTPS kullanıyorsan sertifikanın tarayıcı tarafından güvenilir olduğundan emin ol; protokol, host ve portu doğrula; Jackett'in çalıştığını kontrol et.
 
-Firefox uzantısında doğru host izni varken Jackett için `AllowCORS=true` açmak normalde gerekmez. v0.1.4 genel `NetworkError` hatalarını otomatik olarak CORS diye etiketlemez.
+Firefox uzantısında doğru host izni varken Jackett için `AllowCORS=true` açmak normalde gerekmez. v0.1.5 genel `NetworkError` hatalarını otomatik olarak CORS diye etiketlemez.
 
 ### Test
 
@@ -359,10 +359,10 @@ Run from PowerShell:
 
 This creates:
 
-- `altyazidb-arr-bridge-chrome-0.1.4.zip`
-- `altyazidb-arr-bridge-firefox-0.1.4.zip`
-- `altyazidb-arr-bridge-firefox-0.1.4.xpi`
-- `release/altyazidb-arr-bridge-complete-0.1.4.zip`
+- `altyazidb-arr-bridge-chrome-0.1.5.zip`
+- `altyazidb-arr-bridge-firefox-0.1.5.zip`
+- `altyazidb-arr-bridge-firefox-0.1.5.xpi`
+- `release/altyazidb-arr-bridge-complete-0.1.5.zip`
 
 ### Troubleshooting
 
@@ -370,7 +370,7 @@ This creates:
 
 If Test Jackett fails in Firefox or Zen, check the following:
 
-1. **Host permission** — v0.1.4 declares localhost access without port-specific match patterns. If you use a LAN address or custom domain, accept the host permission request in extension settings. A rejected permission stops the request before any network call.
+1. **Host permission** — v0.1.5 declares localhost access without port-specific match patterns. If you use a LAN address or custom domain, accept the host permission request in extension settings. A rejected permission stops the request before any network call.
 
 2. **IPv6 trap** — On Windows, `localhost` resolves to `::1` (IPv6) first. Jackett binds to `127.0.0.1` (IPv4) only by default, so the browser tries `[::1]:9117` and the connection is refused.
    - **Fix A (recommended):** Use `http://127.0.0.1:9117` as the Base URL. This is the v0.1.3 default.
@@ -380,7 +380,7 @@ If Test Jackett fails in Firefox or Zen, check the following:
 
 4. **TLS / incorrect URL / offline service** — Confirm the protocol, host, and port; ensure Jackett is running; and make sure any HTTPS certificate is trusted by the browser.
 
-With the correct Firefox host permission, enabling Jackett `AllowCORS=true` is not normally required for the extension. v0.1.4 no longer labels every generic `NetworkError` as CORS.
+With the correct Firefox host permission, enabling Jackett `AllowCORS=true` is not normally required for the extension. v0.1.5 no longer labels every generic `NetworkError` as CORS.
 
 ### Testing
 
