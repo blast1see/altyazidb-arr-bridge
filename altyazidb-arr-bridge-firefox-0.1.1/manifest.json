@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "AltyaziDB Arr Bridge",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Adds Radarr, Sonarr, Prowlarr, and Jackett lookup buttons to AltyaziDB subtitle pages.",
   "icons": {
     "16": "assets/icon-16.png",
