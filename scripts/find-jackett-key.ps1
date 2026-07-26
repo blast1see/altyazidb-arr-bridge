@@ -16,4 +16,4 @@ foreach ($p in $candidates) {
         Write-Host ("FOUND: $p  ($((Get-Item -LiteralPath $p).Length) bytes)")
     }
 }
-Write-Host "(If none listed, pass the key on the command line.)"
+Write-Host "(If none is listed, set a temporary JACKETT_APIKEY environment variable; command-line secrets are rejected.)"

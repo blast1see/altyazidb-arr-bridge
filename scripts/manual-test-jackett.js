@@ -4,9 +4,9 @@
  * click the Jackett button on a page with IMDb ID tt17220216.
  *
  * Usage:
- *   node scripts/manual-test-jackett.js                     # uses localhost:9117 + env JACKETT_APIKEY
- *   node scripts/manual-test-jackett.js <apikey>            # pass key as arg
- *   node scripts/manual-test-jackett.js <apikey> <baseUrl>  # custom host
+ *   $env:JACKETT_APIKEY = "..."
+ *   $env:JACKETT_BASE_URL = "http://localhost:9117" # optional
+ *   node scripts/manual-test-jackett.js
  *
  * Reports:
  *   - Jackett server reachability
@@ -28,8 +28,13 @@ const sandbox = { globalThis: {}, console };
 new Function("globalThis", cfgSrc)(sandbox.globalThis);
 const CFG = sandbox.globalThis.AdbArrConfig;
 
-const apikey = process.argv[2] || process.env.JACKETT_APIKEY || "";
-const baseUrl = process.argv[3] || "http://localhost:9117";
+if (process.argv.length > 2) {
+  console.error("Command-line secrets are not accepted. Use the temporary JACKETT_APIKEY environment variable.");
+  process.exit(2);
+}
+
+const apikey = process.env.JACKETT_APIKEY || "";
+const baseUrl = process.env.JACKETT_BASE_URL || "http://localhost:9117";
 const media = {
   title: "Monarch: Legacy of Monsters",
   year: 2023,
@@ -38,11 +43,16 @@ const media = {
 
 if (!apikey) {
   console.log(
-    "No API key provided. Pass it as the first argument, e.g.:\n" +
-      '  node scripts/manual-test-jackett.js "abc123deadbeef"\n' +
-      "Or set env JACKETT_APIKEY. You can copy it from the Jackett dashboard\n" +
+    "No API key provided. Set a temporary JACKETT_APIKEY environment variable.\n" +
+      "You can copy it from the Jackett dashboard\n" +
       "(top-right, under 'API Key').",
   );
+}
+
+function redact(value) {
+  let output = String(value || "");
+  if (apikey) output = output.split(apikey).join("[REDACTED]");
+  return output.replace(/(apikey\s*[=:]\s*)[^&\s<>'"]+/gi, "$1[REDACTED]");
 }
 
 function get(url, timeoutMs = 15000) {
@@ -106,7 +116,7 @@ function get(url, timeoutMs = 15000) {
     if (r.status === 200) {
       console.log("  Caps XML:", /<caps[\s>]/i.test(r.body) ? "present" : "not detected");
     } else {
-      console.log("  Response body (truncated):", r.body.slice(0, 200));
+      console.log("  Response body (truncated):", redact(r.body).slice(0, 200));
     }
   } catch (e) {
     console.log("  ERROR:", e.message);
@@ -147,13 +157,13 @@ function get(url, timeoutMs = 15000) {
     apikey,
     ...plan.apiParams,
   });
-  console.log("  URL         :", searchUrl.replace(apikey, "<KEY>"));
+  console.log("  URL         :", redact(searchUrl));
 
   try {
     const r = await get(searchUrl, 30000);
     console.log("  HTTP", r.status);
     if (r.status !== 200) {
-      console.log("  Body:", r.body.slice(0, 300));
+      console.log("  Body:", redact(r.body).slice(0, 300));
       process.exit(1);
     }
     const data = JSON.parse(r.body);
