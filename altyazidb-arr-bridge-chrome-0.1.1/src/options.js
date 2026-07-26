@@ -5,6 +5,8 @@
   const permissionsApi = extensionApi.permissions;
   const form = document.getElementById("optionsForm");
   const statusNode = document.getElementById("status");
+  const API_KEY_SERVICES = ["radarr", "sonarr", "prowlarr", "jackett"];
+  let currentSettings = CFG.mergeSettings(CFG.DEFAULT_SETTINGS);
 
   function usingPromiseBrowserApi() {
     return typeof globalThis.browser !== "undefined" && !!globalThis.browser.runtime;
@@ -87,18 +89,69 @@
     return node.value.trim();
   }
 
+  function capitalize(value) {
+    return String(value).charAt(0).toUpperCase() + String(value).slice(1);
+  }
+
+  function apiKeyValue(service) {
+    const prefix = capitalize(service);
+    const clearControl = field(`clear${prefix}ApiKey`);
+
+    if (clearControl?.checked) {
+      return "";
+    }
+
+    return getValue(`${service}ApiKey`) || currentSettings[`${service}ApiKey`] || "";
+  }
+
+  function clearApiKeyControls() {
+    for (const service of API_KEY_SERVICES) {
+      const prefix = capitalize(service);
+      const keyInput = field(`${service}ApiKey`);
+      const clearControl = field(`clear${prefix}ApiKey`);
+
+      if (keyInput) {
+        keyInput.value = "";
+        keyInput.disabled = Boolean(clearControl?.checked);
+      }
+
+      if (clearControl) {
+        clearControl.checked = false;
+      }
+
+      if (keyInput) {
+        keyInput.disabled = false;
+      }
+    }
+  }
+
+  function syncApiKeyClearControl(clearControl) {
+    const service = clearControl?.dataset?.service;
+    const keyInput = service ? field(`${service}ApiKey`) : null;
+
+    if (!keyInput) {
+      return;
+    }
+
+    if (clearControl.checked) {
+      keyInput.value = "";
+    }
+
+    keyInput.disabled = clearControl.checked;
+  }
+
   function readForm() {
     return CFG.mergeSettings({
       radarrBaseUrl: getValue("radarrBaseUrl"),
-      radarrApiKey: getValue("radarrApiKey"),
+      radarrApiKey: apiKeyValue("radarr"),
       sonarrBaseUrl: getValue("sonarrBaseUrl"),
-      sonarrApiKey: getValue("sonarrApiKey"),
+      sonarrApiKey: apiKeyValue("sonarr"),
       prowlarrBaseUrl: getValue("prowlarrBaseUrl"),
-      prowlarrApiKey: getValue("prowlarrApiKey"),
+      prowlarrApiKey: apiKeyValue("prowlarr"),
       showProwlarrButton: getValue("showProwlarrButton"),
       prowlarrLimit: getValue("prowlarrLimit"),
       jackettBaseUrl: getValue("jackettBaseUrl"),
-      jackettApiKey: getValue("jackettApiKey"),
+      jackettApiKey: apiKeyValue("jackett"),
       jackettIndexer: getValue("jackettIndexer"),
       jackettLimit: getValue("jackettLimit"),
       showJackettButton: getValue("showJackettButton"),
@@ -117,6 +170,10 @@
     const merged = CFG.mergeSettings(settings);
 
     for (const [key, value] of Object.entries(merged)) {
+      if (key.endsWith("ApiKey")) {
+        continue;
+      }
+
       if (key === "behavior") {
         const radio = document.querySelector(`input[name="behavior"][value="${value}"]`);
 
@@ -130,7 +187,14 @@
       setValue(key, value);
     }
 
+    clearApiKeyControls();
     syncAutoFields();
+  }
+
+  async function storeSettings(settings) {
+    await storageSet(settings);
+    currentSettings = CFG.mergeSettings(settings);
+    clearApiKeyControls();
   }
 
   function syncAutoFields() {
@@ -247,7 +311,7 @@
         return;
       }
 
-      await storageSet(settings);
+      await storeSettings(settings);
       const response = await sendMessage({
         type: "ADB_LOAD_CHOICES",
         service
@@ -283,7 +347,7 @@
         return;
       }
 
-      await storageSet(settings);
+      await storeSettings(settings);
       const response = await sendMessage({
         type: "ADB_TEST_CONNECTION",
         service
@@ -301,12 +365,17 @@
   }
 
   async function load() {
-    writeForm(await storageGet(CFG.DEFAULT_SETTINGS));
+    currentSettings = CFG.mergeSettings(await storageGet(CFG.DEFAULT_SETTINGS));
+    writeForm(currentSettings);
   }
 
   form.addEventListener("change", (event) => {
     if (event.target.name === "behavior") {
       syncAutoFields();
+    }
+
+    if (event.target.matches("[data-clear-api-key]")) {
+      syncApiKeyClearControl(event.target);
     }
   });
 
@@ -327,7 +396,7 @@
         setStatus("Settings saved.", "success");
       }
 
-      await storageSet(settings);
+      await storeSettings(settings);
       writeForm(settings);
     } catch (error) {
       setStatus(error.message || "Settings could not be saved", "error");

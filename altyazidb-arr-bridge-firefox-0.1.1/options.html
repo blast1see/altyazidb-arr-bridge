@@ -25,12 +25,17 @@
 
           <label>
             <span>Base URL</span>
-            <input id="radarrBaseUrl" name="radarrBaseUrl" type="url" spellcheck="false">
+            <input id="radarrBaseUrl" name="radarrBaseUrl" type="text" inputmode="url" spellcheck="false">
           </label>
 
           <label>
             <span>API key</span>
-            <input id="radarrApiKey" name="radarrApiKey" type="password" spellcheck="false" autocomplete="off">
+            <input id="radarrApiKey" name="radarrApiKey" type="password" spellcheck="false" autocomplete="new-password" placeholder="Leave blank to keep the saved key">
+          </label>
+
+          <label class="checkbox-label api-key-delete">
+            <input id="clearRadarrApiKey" type="checkbox" data-clear-api-key data-service="radarr">
+            <span>Delete saved API key</span>
           </label>
 
           <div class="button-row">
@@ -71,12 +76,17 @@
 
           <label>
             <span>Base URL</span>
-            <input id="sonarrBaseUrl" name="sonarrBaseUrl" type="url" spellcheck="false">
+            <input id="sonarrBaseUrl" name="sonarrBaseUrl" type="text" inputmode="url" spellcheck="false">
           </label>
 
           <label>
             <span>API key</span>
-            <input id="sonarrApiKey" name="sonarrApiKey" type="password" spellcheck="false" autocomplete="off">
+            <input id="sonarrApiKey" name="sonarrApiKey" type="password" spellcheck="false" autocomplete="new-password" placeholder="Leave blank to keep the saved key">
+          </label>
+
+          <label class="checkbox-label api-key-delete">
+            <input id="clearSonarrApiKey" type="checkbox" data-clear-api-key data-service="sonarr">
+            <span>Delete saved API key</span>
           </label>
 
           <div class="button-row">
@@ -122,12 +132,17 @@
 
           <label>
             <span>Base URL</span>
-            <input id="prowlarrBaseUrl" name="prowlarrBaseUrl" type="url" spellcheck="false">
+            <input id="prowlarrBaseUrl" name="prowlarrBaseUrl" type="text" inputmode="url" spellcheck="false">
           </label>
 
           <label>
             <span>API key</span>
-            <input id="prowlarrApiKey" name="prowlarrApiKey" type="password" spellcheck="false" autocomplete="off">
+            <input id="prowlarrApiKey" name="prowlarrApiKey" type="password" spellcheck="false" autocomplete="new-password" placeholder="Leave blank to keep the saved key">
+          </label>
+
+          <label class="checkbox-label api-key-delete">
+            <input id="clearProwlarrApiKey" type="checkbox" data-clear-api-key data-service="prowlarr">
+            <span>Delete saved API key</span>
           </label>
 
           <label>
@@ -153,12 +168,17 @@
 
           <label>
             <span>Base URL</span>
-            <input id="jackettBaseUrl" name="jackettBaseUrl" type="url" spellcheck="false">
+            <input id="jackettBaseUrl" name="jackettBaseUrl" type="text" inputmode="url" spellcheck="false">
           </label>
 
           <label>
             <span>API key</span>
-            <input id="jackettApiKey" name="jackettApiKey" type="password" spellcheck="false" autocomplete="off">
+            <input id="jackettApiKey" name="jackettApiKey" type="password" spellcheck="false" autocomplete="new-password" placeholder="Leave blank to keep the saved key">
+          </label>
+
+          <label class="checkbox-label api-key-delete">
+            <input id="clearJackettApiKey" type="checkbox" data-clear-api-key data-service="jackett">
+            <span>Delete saved API key</span>
           </label>
 
           <label>
