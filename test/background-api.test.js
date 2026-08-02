@@ -29,6 +29,8 @@ function createHarness({
 } = {}) {
   const requests = [];
   const openedTabs = [];
+  const timeouts = [];
+  const permissionQueries = [];
   let messageHandler;
 
   const browser = {
@@ -61,7 +63,16 @@ function createHarness({
       }
     },
     permissions: {
-      async contains() {
+      async contains({ origins } = {}) {
+        permissionQueries.push(...(origins || []));
+
+        for (const origin of origins || []) {
+          // Mirror the browser: an IPv6 literal is not a valid match pattern.
+          if (/\/\/\[/.test(origin)) {
+            throw new Error(`Invalid value for origins: ${origin}`);
+          }
+        }
+
         return permissionAllowed;
       }
     }
@@ -76,7 +87,10 @@ function createHarness({
       requests.push({ url: String(url), options: options || {} });
       return fetchImpl(String(url), options || {}, requests);
     },
-    setTimeout
+    setTimeout: (handler, delay, ...args) => {
+      timeouts.push(delay);
+      return setTimeout(handler, delay, ...args);
+    }
   };
 
   vm.createContext(sandbox);
@@ -87,7 +101,9 @@ function createHarness({
 
   return {
     openedTabs,
+    permissionQueries,
     requests,
+    timeouts,
     send(message, sender = { id: "adb-test-extension" }) {
       return messageHandler(message, sender);
     }
@@ -907,6 +923,156 @@ test("auto-add refuses invalid roots or profiles and remains opt-in", async (t) 
     });
     assert.equal(harness.requests.some((request) => request.options.method === "POST"), false);
   });
+});
+
+test("alternative Prowlarr and Jackett queries are capped", async (t) => {
+  // Every retry fans out to all enabled trackers, so unbounded title variants
+  // used to turn one click into a long chain of aggregate searches.
+  const media = {
+    title: "Deep Title",
+    searchTitle: "Variant One",
+    originalTitle: "Variant Two",
+    alternativeTitles: ["Variant Three", "Variant Four", "Variant Five"],
+    releaseTitles: ["Variant Six", "Variant Seven"],
+    year: 2024,
+    mediaType: "movie"
+  };
+
+  await t.test("prowlarr", async () => {
+    const harness = createHarness({
+      settings: { behavior: "showPopupResults", prowlarrApiKey: "prowlarr-key" },
+      fetchImpl: () => response([])
+    });
+    const result = await harness.send({ type: "ADB_LOOKUP", service: "prowlarr", media });
+
+    assert.equal(result.ok, false);
+    assert.equal(harness.requests.length, 3);
+  });
+
+  await t.test("jackett", async () => {
+    const harness = createHarness({
+      settings: { behavior: "showPopupResults", jackettApiKey: "jackett-key" },
+      fetchImpl: () => response({ Results: [] })
+    });
+    const result = await harness.send({ type: "ADB_LOOKUP", service: "jackett", media });
+
+    assert.equal(result.ok, false);
+    assert.equal(harness.requests.length, 3);
+  });
+
+  await t.test("a first-query hit still stops after one request", async () => {
+    const harness = createHarness({
+      settings: { behavior: "showPopupResults", prowlarrApiKey: "prowlarr-key" },
+      fetchImpl: () => response([{ title: "Variant One 2024", indexer: "Mock" }])
+    });
+    const result = await harness.send({ type: "ADB_LOOKUP", service: "prowlarr", media });
+
+    assert.equal(result.ok, true);
+    assert.equal(harness.requests.length, 1);
+  });
+});
+
+test("Prowlarr popup results honour the configured limit", async () => {
+  const harness = createHarness({
+    settings: {
+      behavior: "showPopupResults",
+      prowlarrApiKey: "prowlarr-key",
+      prowlarrLimit: 2
+    },
+    fetchImpl: () =>
+      response([
+        { title: "One", indexer: "Mock" },
+        { title: "Two", indexer: "Mock" },
+        { title: "Three", indexer: "Mock" }
+      ])
+  });
+  const result = await harness.send({
+    type: "ADB_LOOKUP",
+    service: "prowlarr",
+    media: { title: "Movie", year: 2024, mediaType: "movie" }
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.results.length, 2);
+  assert.equal(new URL(harness.requests[0].url).searchParams.get("limit"), "2");
+});
+
+test("aggregate searches get a longer timeout than plain API calls", async () => {
+  const timeouts = [];
+  const harness = createHarness({
+    settings: {
+      behavior: "showPopupResults",
+      jackettApiKey: "jackett-key",
+      radarrApiKey: "radarr-key"
+    },
+    fetchImpl(url, options) {
+      timeouts.push(options.signal ? "aborted-signal" : "no-signal");
+      return new URL(url).pathname.includes("/indexers/")
+        ? response({ Results: [{ Title: "Result", Seeders: 1 }] })
+        : response([{ title: "Movie", tmdbId: 101 }]);
+    }
+  });
+
+  await harness.send({
+    type: "ADB_LOOKUP",
+    service: "jackett",
+    media: { title: "Movie", year: 2024, mediaType: "movie" }
+  });
+  await harness.send({
+    type: "ADB_LOOKUP",
+    service: "radarr",
+    media: { title: "Movie", year: 2024, mediaType: "movie" }
+  });
+
+  assert.deepEqual(timeouts, ["aborted-signal", "aborted-signal"]);
+  assert.equal(harness.timeouts[0], 30000);
+  assert.equal(harness.timeouts.at(-1), 10000);
+});
+
+test("IPv6 service URLs skip the unsupported permission pattern and still fetch", async () => {
+  // permissions.contains() throws on `http://[::1]/*`, so the pre-flight check
+  // is skipped and the browser enforces host access for the request instead.
+  const harness = createHarness({
+    settings: {
+      behavior: "showPopupResults",
+      jackettBaseUrl: "http://[::1]:9117",
+      jackettApiKey: "jackett-key"
+    },
+    permissionAllowed: false,
+    fetchImpl: () => response({ Results: [{ Title: "Result", Seeders: 3 }] })
+  });
+  const result = await harness.send({
+    type: "ADB_LOOKUP",
+    service: "jackett",
+    media: { title: "Movie", year: 2024, mediaType: "movie" }
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(harness.requests.length, 1);
+  assert.equal(new URL(harness.requests[0].url).hostname, "[::1]");
+  assert.deepEqual(harness.permissionQueries, []);
+});
+
+test("IPv6 loopback failures report localhost guidance", async () => {
+  const harness = createHarness({
+    settings: {
+      behavior: "showPopupResults",
+      jackettBaseUrl: "http://[::1]:9117",
+      jackettApiKey: "jackett-key"
+    },
+    fetchImpl() {
+      throw new TypeError("NetworkError when attempting to fetch resource");
+    }
+  });
+  const result = await harness.send({
+    type: "ADB_LOOKUP",
+    service: "jackett",
+    media: { title: "Movie", year: 2024, mediaType: "movie" }
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.error, /localhost Jackett/i);
+  assert.match(result.error, /service is running and the URL and port are correct/i);
 });
 
 test("magnet and active result URLs fall back to the configured search page", async () => {

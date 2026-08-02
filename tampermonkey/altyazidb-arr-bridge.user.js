@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AltyaziDB Arr Bridge
 // @namespace    https://altyazidb.com/
-// @version      0.1.5-tm
+// @version      0.1.6-tm
 // @description  Adds Radarr, Sonarr, optional Prowlarr, and optional Jackett buttons to AltyaziDB subtitle pages.
 // @match        http://altyazidb.com/*
 // @match        http://*.altyazidb.com/*
@@ -29,6 +29,7 @@
   "use strict";
 
   const ROOT_ID = "altyazidb-arr-bridge-tm";
+  const OPTIONS_HOST_ID = "altyazidb-arr-bridge-tm-options";
   const SETTINGS_KEY = "adbArrBridgeSettings";
   const DETAIL_SELECTOR = [
     ".v2-detail-title",
@@ -93,6 +94,18 @@
     prowlarr: "Prowlarr",
     jackett: "Jackett"
   };
+
+  // Release-name parsing can produce many title variants. Prowlarr and Jackett
+  // queries fan out to every enabled tracker, so only the strongest few
+  // alternatives are retried before falling back to the search page.
+  const MAX_SEARCH_ATTEMPTS = 3;
+
+  // Status and lookup endpoints answer quickly; aggregate tracker searches
+  // routinely need longer than a plain API call.
+  const REQUEST_TIMEOUT_MS = 10000;
+  const SEARCH_TIMEOUT_MS = 30000;
+  const MAX_RENDER_ATTEMPTS = 20;
+  const RENDER_DEBOUNCE_MS = 150;
 
   const ICONS = {
     radarr: pngData(`
@@ -474,9 +487,24 @@
   }
 
   function isLocalhostUrl(baseUrl) {
+    const normalized = normalizeBaseUrl(baseUrl, baseUrl);
+
+    if (!normalized) {
+      return false;
+    }
+
     try {
-      const host = new URL(normalizeBaseUrl(baseUrl, baseUrl)).hostname;
-      return ["localhost", "127.0.0.1", "::1"].includes(host);
+      // URL.hostname keeps IPv6 literals bracketed, so `[::1]` must be unwrapped
+      // before it can be compared with the loopback address.
+      const host = new URL(normalized).hostname.toLowerCase().replace(/^\[|]$/g, "");
+
+      return (
+        host === "localhost" ||
+        host.endsWith(".localhost") ||
+        host === "::1" ||
+        host === "0:0:0:0:0:0:0:1" ||
+        /^127(?:\.\d{1,3}){3}$/.test(host)
+      );
     } catch (_error) {
       return false;
     }
@@ -852,10 +880,10 @@
       }
     }
 
-    return redacted.replace(/(apikey\s*[=:]\s*)[^&\s<>'"]+/gi, "$1[REDACTED]");
+    return redacted.replace(/(api[-_]?key"?\s*[=:]\s*"?)[^&\s<>'"]+/gi, "$1[REDACTED]");
   }
 
-  function gmRequest({ method = "GET", url, headers = {}, body = null, timeout = 10000 }) {
+  function gmRequest({ method = "GET", url, headers = {}, body = null, timeout = REQUEST_TIMEOUT_MS }) {
     return new Promise((resolve, reject) => {
       GM_xmlhttpRequest({
         method,
@@ -910,7 +938,8 @@
         method: options.method || "GET",
         url,
         headers,
-        body: options.body || null
+        body: options.body || null,
+        timeout: options.timeoutMs || REQUEST_TIMEOUT_MS
       });
     } catch (error) {
       throw new ArrBridgeError("connect", requestFailureMessage(service, baseUrl, error));
@@ -1091,52 +1120,52 @@
     };
   }
 
-async function lookupArr(service, media, settings) {
-  const searchPlan = buildSearchPlan(service, media);
-  const baseUrl = serviceBaseUrl(settings, service);
-  const fallbackUrl = fallbackUrlForService(service, settings, searchPlan);
+  async function lookupArr(service, media, settings) {
+    const searchPlan = buildSearchPlan(service, media);
+    const baseUrl = serviceBaseUrl(settings, service);
+    const fallbackUrl = fallbackUrlForService(service, settings, searchPlan);
 
-  if (!serviceApiKey(settings, service)) {
-    if (fallbackUrl) {
-      openUrl(fallbackUrl);
-    }
+    if (!serviceApiKey(settings, service)) {
+      if (fallbackUrl) {
+        openUrl(fallbackUrl);
+      }
 
-    return {
+      return {
         ok: false,
         service,
         error: `${serviceLabel(service)} API key missing`,
         fallbackUrl,
-      opened: Boolean(fallbackUrl),
-      message: fallbackUrl
-        ? `${serviceLabel(service)} API key missing. Opened browser search fallback.`
-        : `${serviceLabel(service)} API key missing and the configured URL is invalid.`
-    };
-  }
-
-  const canCheckExisting =
-    (service === "radarr" && media?.tmdbId && media?.tmdbType !== "tv") ||
-    (service === "sonarr" && media?.tvdbId);
-
-  let checkedExistingIdentity = "";
-
-  if (settings.behavior !== "showPopupResults" && canCheckExisting) {
-    const existing = await findExisting(service, settings, media);
-    checkedExistingIdentity = existingIdentity(service, media);
-    const existingUrl = buildDetailPageUrl(baseUrl, service, existing);
-
-    if (existingUrl) {
-      openUrl(existingUrl);
-      return {
-        ok: true,
-        service,
-        opened: true,
-        openedUrl: existingUrl,
-        message: `Opened existing ${serviceLabel(service)} item.`
+        opened: Boolean(fallbackUrl),
+        message: fallbackUrl
+          ? `${serviceLabel(service)} API key missing. Opened browser search fallback.`
+          : `${serviceLabel(service)} API key missing and the configured URL is invalid.`
       };
     }
-  }
 
-  const data = await callArrApi(service, settings, searchPlan.apiPath, searchPlan.apiParams);
+    const canCheckExisting =
+      (service === "radarr" && media?.tmdbId && media?.tmdbType !== "tv") ||
+      (service === "sonarr" && media?.tvdbId);
+
+    let checkedExistingIdentity = "";
+
+    if (settings.behavior !== "showPopupResults" && canCheckExisting) {
+      const existing = await findExisting(service, settings, media);
+      checkedExistingIdentity = existingIdentity(service, media);
+      const existingUrl = buildDetailPageUrl(baseUrl, service, existing);
+
+      if (existingUrl) {
+        openUrl(existingUrl);
+        return {
+          ok: true,
+          service,
+          opened: true,
+          openedUrl: existingUrl,
+          message: `Opened existing ${serviceLabel(service)} item.`
+        };
+      }
+    }
+
+    const data = await callArrApi(service, settings, searchPlan.apiPath, searchPlan.apiParams);
     const results = normalizeResults(data);
     const best = chooseBestResult(service, media, results);
 
@@ -1199,16 +1228,18 @@ async function lookupArr(service, media, settings) {
   async function lookupProwlarr(media, settings) {
     const searchPlan = buildSearchPlan("prowlarr", media);
     searchPlan.apiParams.limit = settings.prowlarrLimit;
-    const searchPlans = prowlarrTerms(media).map((query) => ({
-      ...searchPlan,
-      term: query,
-      fallbackTerm: query,
-      apiParams: {
-        ...searchPlan.apiParams,
-        query,
-        limit: settings.prowlarrLimit
-      }
-    }));
+    const searchPlans = prowlarrTerms(media)
+      .slice(0, MAX_SEARCH_ATTEMPTS)
+      .map((query) => ({
+        ...searchPlan,
+        term: query,
+        fallbackTerm: query,
+        apiParams: {
+          ...searchPlan.apiParams,
+          query,
+          limit: settings.prowlarrLimit
+        }
+      }));
     const plans = searchPlans.length ? searchPlans : [searchPlan];
     const fallbackUrl = fallbackUrlForService("prowlarr", settings, plans[0]);
 
@@ -1226,14 +1257,16 @@ async function lookupArr(service, media, settings) {
         message: fallbackUrl
           ? "Prowlarr API key missing. Opened browser search fallback."
           : "Prowlarr API key missing and the configured URL is invalid."
-    };
-  }
+      };
+    }
 
     let activePlan = plans[0];
     let releases = [];
 
     for (const plan of plans) {
-      const data = await callArrApi("prowlarr", settings, plan.apiPath, plan.apiParams);
+      const data = await callArrApi("prowlarr", settings, plan.apiPath, plan.apiParams, {
+        timeoutMs: SEARCH_TIMEOUT_MS
+      });
       if (!Array.isArray(data)) {
         throw new ArrBridgeError("invalidResponse", "Prowlarr returned an invalid response");
       }
@@ -1264,7 +1297,7 @@ async function lookupArr(service, media, settings) {
         mode: "showPopupResults",
         searchTerm: activePlan.term,
         fallbackUrl: activeFallbackUrl,
-        results: releases.slice(0, 8).map((result) => ({
+        results: releases.slice(0, settings.prowlarrLimit).map((result) => ({
           ...summarizeRelease(result),
           searchTerm: activePlan.term
         }))
@@ -1283,12 +1316,14 @@ async function lookupArr(service, media, settings) {
 
   async function lookupJackett(media, settings) {
     const searchPlan = buildSearchPlan("jackett", media);
-    const searchPlans = jackettTerms(media).map((query) => ({
-      ...searchPlan,
-      term: query,
-      fallbackTerm: query,
-      apiParams: { ...searchPlan.apiParams, Query: query }
-    }));
+    const searchPlans = jackettTerms(media)
+      .slice(0, MAX_SEARCH_ATTEMPTS)
+      .map((query) => ({
+        ...searchPlan,
+        term: query,
+        fallbackTerm: query,
+        apiParams: { ...searchPlan.apiParams, Query: query }
+      }));
     const plans = searchPlans.length ? searchPlans : [searchPlan];
     const fallbackUrl = fallbackUrlForService("jackett", settings, plans[0]);
 
@@ -1317,7 +1352,9 @@ async function lookupArr(service, media, settings) {
     let rawResults = [];
 
     for (const plan of plans) {
-      const data = await callArrApi("jackett", settings, apiPath, plan.apiParams);
+      const data = await callArrApi("jackett", settings, apiPath, plan.apiParams, {
+        timeoutMs: SEARCH_TIMEOUT_MS
+      });
       if (!data || !Array.isArray(data.Results)) {
         throw new ArrBridgeError("invalidResponse", "Jackett returned an invalid response");
       }
@@ -2141,8 +2178,7 @@ async function lookupArr(service, media, settings) {
 
       .adb-tm-link-button,
       .adb-tm-result-action,
-      .adb-tm-popup-close,
-      .adb-tm-options button {
+      .adb-tm-popup-close {
         border: 1px solid rgba(148, 163, 184, 0.24);
         border-radius: 8px;
         background: rgba(15, 23, 42, 0.74);
@@ -2235,10 +2271,34 @@ async function lookupArr(service, media, settings) {
         white-space: nowrap;
       }
 
+      @media (max-width: 840px) {
+        .adb-tm-result {
+          grid-template-columns: 1fr;
+        }
+
+        .v2-movie-title-row #${ROOT_ID},
+        .adb-tm-shell,
+        .adb-tm-button-row,
+        .adb-tm-button,
+        .adb-tm-result-action {
+          width: 100%;
+        }
+      }
+    `;
+    document.documentElement.append(style);
+  }
+
+  // Settings panel styles live inside the panel's shadow root, so they are
+  // written separately from the page-level shell styles above.
+  function optionsPanelStyles() {
+    return `
+      :host {
+        all: initial;
+      }
+
       .adb-tm-options-backdrop {
-        position: fixed;
+        position: absolute;
         inset: 0;
-        z-index: 2147483647;
         display: grid;
         place-items: center;
         padding: 20px;
@@ -2312,6 +2372,13 @@ async function lookupArr(service, media, settings) {
         gap: 10px;
       }
 
+      .adb-tm-icon {
+        display: block;
+        width: 32px;
+        height: 32px;
+        object-fit: contain;
+      }
+
       .adb-tm-options label {
         display: grid;
         gap: 6px;
@@ -2342,6 +2409,12 @@ async function lookupArr(service, media, settings) {
       .adb-tm-options button {
         min-height: 34px;
         padding: 8px 10px;
+        border: 1px solid rgba(148, 163, 184, 0.24);
+        border-radius: 8px;
+        background: rgba(15, 23, 42, 0.74);
+        color: #e2e8f0;
+        cursor: pointer;
+        font: 800 12px/1 Inter, system-ui, sans-serif;
       }
 
       .adb-tm-options-primary {
@@ -2381,21 +2454,11 @@ async function lookupArr(service, media, settings) {
       }
 
       @media (max-width: 840px) {
-        .adb-tm-options-grid,
-        .adb-tm-result {
+        .adb-tm-options-grid {
           grid-template-columns: 1fr;
-        }
-
-        .v2-movie-title-row #${ROOT_ID},
-        .adb-tm-shell,
-        .adb-tm-button-row,
-        .adb-tm-button,
-        .adb-tm-result-action {
-          width: 100%;
         }
       }
     `;
-    document.documentElement.append(style);
   }
 
   function buttonLabel(service) {
@@ -2570,7 +2633,15 @@ async function lookupArr(service, media, settings) {
     }
 
     popup.append(title, close, list);
+    popup.tabIndex = -1;
+    popup.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        clearPopup(shell);
+      }
+    });
     shell.append(popup);
+    popup.focus();
   }
 
   async function handleButtonClick(event, shell, media) {
@@ -2765,10 +2836,24 @@ async function lookupArr(service, media, settings) {
   }
 
   async function openSettingsPanel() {
-    injectStyles();
-    document.querySelector(".adb-tm-options-backdrop")?.remove();
+    document.getElementById(OPTIONS_HOST_ID)?.remove();
 
     let settings = await getSettings();
+
+    // The panel holds API-key inputs, so it is mounted in a closed shadow root
+    // instead of the page DOM: host.shadowRoot stays null for page scripts and
+    // composedPath() of events raised inside stops at the host element.
+    const host = document.createElement("div");
+    host.id = OPTIONS_HOST_ID;
+    host.setAttribute(
+      "style",
+      "position:fixed;inset:0;z-index:2147483647;display:block;"
+    );
+
+    const shadow = host.attachShadow({ mode: "closed" });
+    const panelStyle = document.createElement("style");
+    panelStyle.textContent = optionsPanelStyles();
+
     const backdrop = document.createElement("div");
     backdrop.className = "adb-tm-options-backdrop";
     backdrop.innerHTML = `
@@ -2900,7 +2985,12 @@ async function lookupArr(service, media, settings) {
       </section>
     `;
 
-    document.documentElement.append(backdrop);
+    backdrop.tabIndex = -1;
+    shadow.append(panelStyle, backdrop);
+    document.documentElement.append(host);
+    backdrop.focus();
+
+    const closePanel = () => host.remove();
 
     for (const clearControl of backdrop.querySelectorAll("[data-clear-service]")) {
       clearControl.addEventListener("change", () => {
@@ -2912,10 +3002,16 @@ async function lookupArr(service, media, settings) {
       });
     }
 
-    backdrop.querySelector("[data-close]").addEventListener("click", () => backdrop.remove());
+    backdrop.querySelector("[data-close]").addEventListener("click", closePanel);
     backdrop.addEventListener("click", (event) => {
       if (event.target === backdrop) {
-        backdrop.remove();
+        closePanel();
+      }
+    });
+    backdrop.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        closePanel();
       }
     });
 
@@ -2998,6 +3094,9 @@ async function lookupArr(service, media, settings) {
     let attempts = 0;
     let timer = 0;
     let observer = null;
+    let rendering = false;
+    let mounted = false;
+    let lastUrl = window.location.href;
 
     const stop = () => {
       if (timer) {
@@ -3006,53 +3105,86 @@ async function lookupArr(service, media, settings) {
       }
     };
 
-    const scheduleRender = (delay = 150) => {
-      clearTimeout(timer);
+    const scheduleRender = (delay = RENDER_DEBOUNCE_MS) => {
+      stop();
       timer = setTimeout(tryRender, delay);
     };
 
+    const resetAttempts = () => {
+      attempts = 0;
+      mounted = false;
+    };
+
     const tryRender = () => {
+      timer = 0;
+
+      // A mutation burst can fire while an earlier render is still awaiting
+      // stored settings. Without this guard both passes append their own shell.
+      if (rendering) {
+        scheduleRender();
+        return;
+      }
+
       attempts += 1;
+      rendering = true;
 
       render()
         .then((done) => {
-          if (done) {
+          // Only a shell that is really in the document earns a fresh retry
+          // budget when the site later removes it.
+          mounted = Boolean(done) && Boolean(document.getElementById(ROOT_ID));
+
+          if (done || attempts >= MAX_RENDER_ATTEMPTS) {
             stop();
             return;
           }
 
-          if (attempts >= 20) {
-            stop();
-            return;
-          }
-
-          timer = setTimeout(tryRender, attempts < 6 ? 500 : 1500);
+          scheduleRender(attempts < 6 ? 500 : 1500);
         })
         .catch((error) => {
           console.error("[AltyaziDB Arr Bridge]", error);
 
-          if (attempts < 20) {
-            timer = setTimeout(tryRender, 1500);
+          if (attempts < MAX_RENDER_ATTEMPTS) {
+            scheduleRender(1500);
           }
+        })
+        .finally(() => {
+          rendering = false;
         });
     };
 
     if (typeof MutationObserver === "function" && document.documentElement) {
       observer = new MutationObserver(() => {
+        const currentUrl = window.location.href;
+
+        // Attempts are only reset on real navigation or after a mounted shell
+        // disappears. Resetting on every mutation turned pages without detail
+        // markup into an endless render poll.
+        if (currentUrl !== lastUrl) {
+          lastUrl = currentUrl;
+          resetAttempts();
+        }
+
         const shell = document.getElementById(ROOT_ID);
 
-        if (shell?.dataset.sourceUrl !== window.location.href) {
-          shell?.remove();
+        if (shell && shell.dataset.sourceUrl !== currentUrl) {
+          shell.remove();
         }
 
         if (isBlockedPagePath(window.location.pathname)) {
-          attempts = 0;
           stop();
           return;
         }
 
-        if (!document.getElementById(ROOT_ID)) {
-          attempts = 0;
+        if (document.getElementById(ROOT_ID)) {
+          return;
+        }
+
+        if (mounted) {
+          resetAttempts();
+        }
+
+        if (attempts < MAX_RENDER_ATTEMPTS) {
           scheduleRender();
         }
       });
@@ -3062,7 +3194,9 @@ async function lookupArr(service, media, settings) {
     for (const eventName of ["pageshow", "popstate", "hashchange"]) {
       window.addEventListener(eventName, () => {
         document.getElementById(ROOT_ID)?.remove();
-        attempts = 0;
+        lastUrl = window.location.href;
+        resetAttempts();
+
         if (!isBlockedPagePath(window.location.pathname)) {
           scheduleRender(0);
         }

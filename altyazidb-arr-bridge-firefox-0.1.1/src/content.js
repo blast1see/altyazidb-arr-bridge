@@ -32,6 +32,8 @@
     ".comment",
     "[class*='comment']"
   ].join(", ");
+  const MAX_RENDER_ATTEMPTS = 20;
+  const RENDER_DEBOUNCE_MS = 150;
 
   function sendMessage(message) {
     if (globalThis.browser?.runtime?.sendMessage) {
@@ -80,8 +82,7 @@
       .filter((node, index, nodes) => node && nodes.indexOf(node) === index);
   }
 
-  function createPageSnapshot() {
-    const roots = mediaInfoRoots();
+  function createPageSnapshot(roots = mediaInfoRoots()) {
     const hrefs = [];
     const detailYears = [];
 
@@ -247,17 +248,17 @@
     return style.display !== "none" && style.visibility !== "hidden";
   }
 
-  function findYear(snapshot, signals) {
+  function findYear(snapshot, signals, roots) {
     return CFG.yearFromSignals({
       detailYears: [
         ...(snapshot?.detailYears || []),
-        labelValue(/^(?:y\u0131l|yap\u0131m y\u0131l\u0131|year)$/i)
+        labelValue(/^(?:y\u0131l|yap\u0131m y\u0131l\u0131|year)$/i, roots)
       ],
       jsonLdYears: signals?.mediaYears || [],
       titleValues: [
-      meta('meta[property="og:title"]'),
+        meta('meta[property="og:title"]'),
         meta('meta[property="twitter:title"]'),
-      document.title
+        document.title
       ]
     });
   }
@@ -309,8 +310,8 @@
     return CFG.uniqueSearchTitles(values).slice(0, 5);
   }
 
-  function extractAlternativeTitles(title, originalTitle, releaseTitles) {
-    const explicit = labelValue(/alternatif|alternative|di\u011fer ad/i);
+  function extractAlternativeTitles(title, originalTitle, releaseTitles, roots) {
+    const explicit = labelValue(/alternatif|alternative|di\u011fer ad/i, roots);
     const values = [title, originalTitle, ...(releaseTitles || [])];
 
     if (explicit) {
@@ -321,7 +322,10 @@
   }
 
   function extractMedia() {
-    const snapshot = createPageSnapshot();
+    // Resolve the detail containers once; every helper below reuses them
+    // instead of re-running the same four document queries.
+    const roots = mediaInfoRoots();
+    const snapshot = createPageSnapshot(roots);
     const signals = jsonLdSignals(snapshot.jsonLd);
     const ids = extractIdsFromLinks(snapshot, signals);
     const rawTitle =
@@ -334,8 +338,8 @@
     const seasonEpisode = detectSeasonEpisode(rawTitle);
     const title = stripSiteTitle(rawTitle);
     const originalTitle =
-      labelValue(/orijinal ba\u015fl\u0131k|original title|original name/i) || title;
-    const year = findYear(snapshot, signals);
+      labelValue(/orijinal ba\u015fl\u0131k|original title|original name/i, roots) || title;
+    const year = findYear(snapshot, signals, roots);
     const mediaType = detectType(signals, ids, seasonEpisode);
     const releaseTitles = extractReleaseTitles(year);
 
@@ -352,7 +356,7 @@
       tmdbType: ids.tmdbType,
       tvdbId: ids.tvdbId,
       releaseTitles,
-      alternativeTitles: extractAlternativeTitles(title, originalTitle, releaseTitles),
+      alternativeTitles: extractAlternativeTitles(title, originalTitle, releaseTitles, roots),
       sourceUrl: window.location.href
     };
   }
@@ -463,9 +467,8 @@
 
   function setStatus(shell, message, tone = "neutral", fallbackUrl = "", fallbackService = "") {
     const status = shell.querySelector(".adb-arr-status");
-    status.textContent = message || "";
     status.className = `adb-arr-status adb-arr-status-${tone}`;
-    status.innerHTML = "";
+    status.replaceChildren();
 
     if (message) {
       const textNode = document.createElement("span");
@@ -622,7 +625,15 @@
     }
 
     popup.append(title, close, list);
+    popup.tabIndex = -1;
+    popup.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        clearPopup(shell);
+      }
+    });
     shell.append(popup);
+    popup.focus();
   }
 
   async function handleButtonClick(event, shell, media) {
@@ -727,6 +738,9 @@
     let attempts = 0;
     let timer = 0;
     let observer = null;
+    let rendering = false;
+    let mounted = false;
+    let lastUrl = window.location.href;
 
     const stop = () => {
       if (timer) {
@@ -735,51 +749,84 @@
       }
     };
 
-    const scheduleRender = (delay = 150) => {
-      clearTimeout(timer);
+    const scheduleRender = (delay = RENDER_DEBOUNCE_MS) => {
+      stop();
       timer = setTimeout(tryRender, delay);
     };
 
+    const resetAttempts = () => {
+      attempts = 0;
+      mounted = false;
+    };
+
     const tryRender = () => {
+      timer = 0;
+
+      // A mutation burst can fire while an earlier render is still awaiting
+      // storage. Without this guard both passes append their own shell.
+      if (rendering) {
+        scheduleRender();
+        return;
+      }
+
       attempts += 1;
+      rendering = true;
 
       render()
         .then((done) => {
-          if (done) {
+          // Only a shell that is really in the document earns a fresh retry
+          // budget when the site later removes it.
+          mounted = Boolean(done) && Boolean(document.getElementById(ROOT_ID));
+
+          if (done || attempts >= MAX_RENDER_ATTEMPTS) {
             stop();
             return;
           }
 
-          if (attempts >= 20) {
-            stop();
-            return;
-          }
-
-          timer = setTimeout(tryRender, attempts < 6 ? 500 : 1500);
+          scheduleRender(attempts < 6 ? 500 : 1500);
         })
         .catch(() => {
-          if (attempts < 20) {
-            timer = setTimeout(tryRender, 1500);
+          if (attempts < MAX_RENDER_ATTEMPTS) {
+            scheduleRender(1500);
           }
+        })
+        .finally(() => {
+          rendering = false;
         });
     };
 
     if (typeof MutationObserver === "function" && document.documentElement) {
       observer = new MutationObserver(() => {
+        const currentUrl = window.location.href;
+
+        // Attempts are only reset on real navigation or after a mounted shell
+        // disappears. Resetting on every mutation turned pages without detail
+        // markup into an endless render poll.
+        if (currentUrl !== lastUrl) {
+          lastUrl = currentUrl;
+          resetAttempts();
+        }
+
         const shell = document.getElementById(ROOT_ID);
 
-        if (shell?.dataset.sourceUrl !== window.location.href) {
-          shell?.remove();
+        if (shell && shell.dataset.sourceUrl !== currentUrl) {
+          shell.remove();
         }
 
         if (CFG.isBlockedPagePath(window.location.pathname)) {
-          attempts = 0;
           stop();
           return;
         }
 
-        if (!document.getElementById(ROOT_ID)) {
-          attempts = 0;
+        if (document.getElementById(ROOT_ID)) {
+          return;
+        }
+
+        if (mounted) {
+          resetAttempts();
+        }
+
+        if (attempts < MAX_RENDER_ATTEMPTS) {
           scheduleRender();
         }
       });
@@ -789,7 +836,9 @@
     for (const eventName of ["pageshow", "popstate", "hashchange"]) {
       window.addEventListener(eventName, () => {
         document.getElementById(ROOT_ID)?.remove();
-        attempts = 0;
+        lastUrl = window.location.href;
+        resetAttempts();
+
         if (!CFG.isBlockedPagePath(window.location.pathname)) {
           scheduleRender(0);
         }

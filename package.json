@@ -1,12 +1,12 @@
 {
   "name": "altyazidb-arr-bridge",
   "private": true,
-  "version": "0.1.5",
+  "version": "0.1.6",
   "engines": {
     "node": ">=22.12.0"
   },
   "scripts": {
-    "test": "node --test --test-isolation=none test/config.test.js test/background-api.test.js && node scripts/test-detail-page-gating.js && node scripts/verify-jackett-imdb.js",
+    "test": "node --test --test-isolation=none test/config.test.js test/background-api.test.js test/content-render.test.js && node scripts/test-detail-page-gating.js && node scripts/verify-jackett-imdb.js",
     "lint": "node scripts/check-syntax.js",
     "lint:firefox": "web-ext lint --source-dir altyazidb-arr-bridge-firefox-0.1.1 --self-hosted",
     "package:verify": "node scripts/verify-extension-devtools.js",
@@ -17,6 +17,10 @@
     "web-ext": "10.5.0"
   },
   "overrides": {
-    "shell-quote": "1.9.0"
+    "shell-quote": "1.9.0",
+    "adm-zip": "0.6.0",
+    "minimatch": {
+      "brace-expansion": "1.1.17"
+    }
   }
 }

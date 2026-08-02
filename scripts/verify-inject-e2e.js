@@ -476,28 +476,56 @@ async function verifyTampermonkeyKeyPrivacy(browser) {
         if (label === "AltyaziDB Arr Bridge settings") globalThis.__adbSettingsMenu = handler;
       };
 
+      // The settings panel mounts in a closed shadow root, so the harness has
+      // to capture the root at creation time. Page scripts cannot do this after
+      // the fact, which is exactly the property the assertions below check.
+      const nativeAttachShadow = Element.prototype.attachShadow;
+      Element.prototype.attachShadow = function attachShadow(init) {
+        const root = nativeAttachShadow.call(this, init);
+        if (init?.mode === "closed") globalThis.__adbShadow = root;
+        return root;
+      };
+
       const script = document.createElement("script");
       script.textContent = userscript;
       document.documentElement.appendChild(script);
       globalThis.__adbSettingsMenu();
     }, TAMPERMONKEY_JS, secrets);
 
-    await page.waitForSelector(".adb-tm-options-backdrop", { timeout: 10000 });
+    await page.waitForFunction(
+      () => Boolean(globalThis.__adbShadow?.querySelector(".adb-tm-options-backdrop")),
+      { timeout: 10000 }
+    );
     const result = await page.evaluate(async (storedSecrets) => {
+      const root = globalThis.__adbShadow;
       const keySelector = [
         "#adbRadarrApiKey",
         "#adbSonarrApiKey",
         "#adbProwlarrApiKey",
         "#adbJackettApiKey"
       ].join(",");
+      const host = document.getElementById("altyazidb-arr-bridge-tm-options");
+      const isolation = {
+        hostPresent: Boolean(host),
+        // A closed root keeps both of these unreachable from page scripts.
+        shadowRootExposed: Boolean(host?.shadowRoot),
+        panelInPageDom: Boolean(
+          document.querySelector(keySelector) ||
+          document.querySelector(".adb-tm-options-backdrop")
+        )
+      };
       const initial = {
-        secretInDom: storedSecrets.some((secret) => document.documentElement.innerHTML.includes(secret)),
-        keyValues: Array.from(document.querySelectorAll(keySelector), (input) => input.value),
-        clearControls: document.querySelectorAll('input[id^="adbClear"][id$="ApiKey"]').length
+        secretInDom: storedSecrets.some(
+          (secret) =>
+            document.documentElement.innerHTML.includes(secret) ||
+            root.innerHTML.includes(secret)
+        ),
+        keyValues: Array.from(root.querySelectorAll(keySelector), (input) => input.value),
+        clearControls: root.querySelectorAll('input[id^="adbClear"][id$="ApiKey"]').length
       };
       const save = async () => {
         const previousWrites = globalThis.__adbTmWrites.length;
-        document.querySelector("[data-save]").click();
+        root.querySelector("[data-save]").click();
         const started = Date.now();
         while (globalThis.__adbTmWrites.length === previousWrites) {
           if (Date.now() - started > 3000) throw new Error("Tampermonkey save timed out");
@@ -507,21 +535,33 @@ async function verifyTampermonkeyKeyPrivacy(browser) {
         return structuredClone(globalThis.__adbTmState);
       };
 
-      document.getElementById("adbRadarrBaseUrl").value = "https://arr.example.test/apps/radarr/";
+      root.querySelector("#adbRadarrBaseUrl").value = "https://arr.example.test/apps/radarr/";
       const afterUnrelatedChange = await save();
-      const clearControl = document.getElementById("adbClearRadarrApiKey");
+      const clearControl = root.querySelector("#adbClearRadarrApiKey");
       clearControl.checked = true;
       clearControl.dispatchEvent(new Event("change", { bubbles: true }));
-      const clearDisabled = document.getElementById("adbRadarrApiKey").disabled;
+      const clearDisabled = root.querySelector("#adbRadarrApiKey").disabled;
       const afterDelete = await save();
-      document.getElementById("adbJackettApiKey").value = "jackett-dom-replacement";
+      root.querySelector("#adbJackettApiKey").value = "jackett-dom-replacement";
       const afterReplacement = await save();
       const finalDom = {
-        secretInDom: [...storedSecrets, "jackett-dom-replacement"].some((secret) => document.documentElement.innerHTML.includes(secret)),
-        keyValues: Array.from(document.querySelectorAll(keySelector), (input) => input.value)
+        secretInDom: [...storedSecrets, "jackett-dom-replacement"].some(
+          (secret) =>
+            document.documentElement.innerHTML.includes(secret) ||
+            root.innerHTML.includes(secret)
+        ),
+        keyValues: Array.from(root.querySelectorAll(keySelector), (input) => input.value)
       };
 
-      return { initial, afterUnrelatedChange, clearDisabled, afterDelete, afterReplacement, finalDom };
+      return {
+        isolation,
+        initial,
+        afterUnrelatedChange,
+        clearDisabled,
+        afterDelete,
+        afterReplacement,
+        finalDom
+      };
     }, secrets);
 
     const preserved = result.afterUnrelatedChange.radarrApiKey === secrets[0] &&
@@ -536,7 +576,11 @@ async function verifyTampermonkeyKeyPrivacy(browser) {
       result.afterReplacement.sonarrApiKey === secrets[1] &&
       result.afterReplacement.prowlarrApiKey === secrets[2] &&
       result.afterReplacement.jackettApiKey === "jackett-dom-replacement";
-    const pass = !result.initial.secretInDom &&
+    const shadowIsolated = result.isolation.hostPresent &&
+      !result.isolation.shadowRootExposed &&
+      !result.isolation.panelInPageDom;
+    const pass = shadowIsolated &&
+      !result.initial.secretInDom &&
       result.initial.keyValues.length === 4 &&
       result.initial.keyValues.every((value) => value === "") &&
       result.initial.clearControls === 4 &&
@@ -544,6 +588,7 @@ async function verifyTampermonkeyKeyPrivacy(browser) {
       preserved && result.clearDisabled && independentDelete && independentReplacement &&
       !result.finalDom.secretInDom && result.finalDom.keyValues.every((value) => value === "");
     const checks = {
+      shadowIsolated,
       initialDomSafe: !result.initial.secretInDom && result.initial.keyValues.every((value) => value === ""),
       clearControls: result.initial.clearControls === 4,
       unrelatedChangePreserved: preserved,

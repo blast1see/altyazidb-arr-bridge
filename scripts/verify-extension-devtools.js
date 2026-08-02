@@ -146,6 +146,32 @@ check(optionsHtml.includes("Popup result limit"), "Jackett popup limit label mis
 check(!/setValue\([^,]+ApiKey/.test(options), "Options must not write saved API keys into inputs");
 check((optionsHtml.match(/Delete saved API key/g) || []).length === 4, "Options explicit API-key deletion controls missing");
 check((optionsHtml.match(/autocomplete="new-password"/g) || []).length === 4, "Options API-key fields must stay blank and disable autofill");
+const config = read("altyazidb-arr-bridge-chrome-0.1.1/src/config.js");
+
+check(background.includes("CFG.MAX_SEARCH_ATTEMPTS"), "Background does not cap alternative tracker queries");
+check(background.includes("CFG.SEARCH_TIMEOUT_MS"), "Background does not use the longer aggregate-search timeout");
+check(
+  !/results\.slice\(0, 8\)|releases\.slice\(0, 8\)/.test(background),
+  "Prowlarr popup still uses a hard-coded result cap instead of prowlarrLimit"
+);
+check(
+  config.includes('parsed.hostname.startsWith("[")'),
+  "Host permission patterns still emit unsupported IPv6 literals"
+);
+check(
+  /replace\(\/\^\\\[\|]\$\/g, ""\)/.test(config),
+  "Loopback detection does not unwrap bracketed IPv6 hosts"
+);
+check(
+  content.includes("if (rendering)") && content.includes("MAX_RENDER_ATTEMPTS"),
+  "Content script is missing the in-flight render guard or retry budget"
+);
+check(
+  !/attempts = 0;\s*\n\s*scheduleRender\(\);/.test(content),
+  "Content script still resets its retry budget on every mutation"
+);
+check(userscript.includes('attachShadow({ mode: "closed" })'), "Tampermonkey settings panel is not shadow-isolated");
+check(userscript.includes("MAX_SEARCH_ATTEMPTS"), "Tampermonkey does not cap alternative tracker queries");
 check(userscript.includes(`@version      ${version}-tm`), "Tampermonkey version mismatch");
 check(!/Jackett blocked by CORS|AllowCORS=false/.test(userscript), "Tampermonkey still reports generic failures as CORS");
 check(userscript.includes('redirect: "error"'), "Tampermonkey redirect rejection missing");
