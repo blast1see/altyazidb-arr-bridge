@@ -26,7 +26,7 @@ altyazidb-arr-bridge-firefox-0.1.1/  Firefox eklenti kaynağı
 tampermonkey/                        Tampermonkey userscript kaynağı
 scripts/package.ps1                  Zip / XPI / release arşivi oluşturma scripti
 scripts/install-jackett-v6-proxy.ps1 Jackett için IPv6 (`[::1]`) → IPv4 portproxy kurulumu
-test/                                Parser fixture ve mock API testleri
+test/                                Parser fixture, mock API ve content-script render testleri
 CHANGELOG.md                         Sürüm notları
 OPTIMIZATIONS.md                     Optimizasyon denetimi
 README.md                            Türkçe + English dokümantasyon
@@ -99,7 +99,10 @@ Prowlarr:
 - Prowlarr release araması olduğu için isim tabanlı arama yapar.
 - AltyaziDB sayfasında Türkçe/yerel başlık varsa, sadece Prowlarr için altyazı sürüm dosya adından İngilizce/uluslararası ad çıkarılır.
 - Örneğin `Çıkış 8` sayfasında `Exit.8.2025...` sürüm satırı varsa Prowlarr araması `Exit 8 2025` olur.
+- Popup sonuç sayısı `Search result limit` ayarıyla belirlenir.
 - Prowlarr üzerinden otomatik grab/download yapılmaz.
+
+Prowlarr ve Jackett alternatif sorguları en fazla 3 denemeyle sınırlıdır. Her deneme tüm aktif tracker'lara dağıldığı için, sürüm adlarından çıkan çok sayıda başlık varyantı tek tıklamayı uzun bir arama zincirine çevirmez. Toplu tracker aramaları 30 saniye, diğer API çağrıları 10 saniye zaman aşımı kullanır.
 
 Jackett:
 
@@ -140,6 +143,8 @@ Tampermonkey scripti varsayılan olarak yalnızca `localhost` ve `127.0.0.1` ba�
 
 Chrome, Firefox ve Tampermonkey ayar panelleri kaydedilmiş API anahtarını sayfa DOM'una geri yazmaz. Anahtar alanını boş bırakırsan mevcut değer korunur; `Delete saved API key` kutusu ilgili anahtarı açıkça siler.
 
+Tampermonkey ayar paneli v0.1.6'dan itibaren kapalı (`closed`) bir shadow root içinde açılır. Böylece sayfa scriptleri paneli sorgulayamaz, `shadowRoot` üzerinden erişemez ve panelde yazdığın API anahtarını `composedPath()` ile okuyamaz.
+
 ### Paket Oluşturma
 
 PowerShell ile:
@@ -150,10 +155,10 @@ PowerShell ile:
 
 Bu komut şunları üretir:
 
-- `altyazidb-arr-bridge-chrome-0.1.5.zip`
-- `altyazidb-arr-bridge-firefox-0.1.5.zip`
-- `altyazidb-arr-bridge-firefox-0.1.5.xpi`
-- `release/altyazidb-arr-bridge-complete-0.1.5.zip`
+- `altyazidb-arr-bridge-chrome-0.1.6.zip`
+- `altyazidb-arr-bridge-firefox-0.1.6.zip`
+- `altyazidb-arr-bridge-firefox-0.1.6.xpi`
+- `release/altyazidb-arr-bridge-complete-0.1.6.zip`
 
 ### Sorun Giderme
 
@@ -166,6 +171,7 @@ Firefox veya Zen tarayıcıda Test Jackett başarısız oluyorsa şu kontrolleri
 2. **IPv6 tuzağı** — `localhost`, Windows'ta önce `::1` (IPv6) olarak çözümlenir. Jackett varsayılan olarak yalnızca `127.0.0.1` (IPv4) dinler, bu nedenle tarayıcı `[::1]:9117`'ye bağlanmayı dener ve bağlantı reddedilir.
    - **Çözüm A (önerilen):** Base URL alanında `http://127.0.0.1:9117` kullan. v0.1.3 varsayılanı zaten bu.
    - **Çözüm B:** `scripts/install-jackett-v6-proxy.ps1` scriptini yönetici olarak çalıştır. `[::1]:9117 → 127.0.0.1:9117` portproxy'si kurar, yalnızca loopback arayüzünde çalışır (LAN'a açılmaz).
+   - `http://[::1]:9117` gibi IPv6 adresleri tarayıcı match pattern'i olarak yazılamaz. v0.1.6'dan itibaren eklenti bu adreslerde izin ön kontrolünü atlar (host erişimini tarayıcı uygular) ve bağlantı hatasını yine localhost hatası olarak raporlar.
 
 3. **API anahtarı hatası** — 401/Unauthorized alıyorsan Jackett `Dashboard` sayfasının üst kısmındaki `API Key` değerini ayarlara kopyala.
 
@@ -235,7 +241,7 @@ altyazidb-arr-bridge-firefox-0.1.1/  Firefox extension source
 tampermonkey/                        Tampermonkey userscript source
 scripts/package.ps1                  Zip / XPI / release archive packaging script
 scripts/install-jackett-v6-proxy.ps1 IPv6 (`[::1]`) → IPv4 portproxy installer for Jackett
-test/                                Parser fixtures and mock API tests
+test/                                Parser fixtures, mock API tests, and content-script render tests
 CHANGELOG.md                         Release notes
 OPTIMIZATIONS.md                     Optimization audit
 README.md                            Turkish + English documentation
@@ -308,7 +314,10 @@ Prowlarr:
 - Prowlarr uses name-based release searches.
 - If AltyaziDB shows a translated/local title, subtitle release filenames are used only for Prowlarr to derive an English/international title.
 - For example, `Çıkış 8` with an `Exit.8.2025...` release row searches Prowlarr as `Exit 8 2025`.
+- Uses `Search result limit` as the popup result cap.
 - The extension never grabs/downloads releases from Prowlarr automatically.
+
+Prowlarr and Jackett retry at most 3 alternative queries. Each retry fans out to every enabled tracker, so the many title variants that release-name parsing can produce never turn one click into a long search chain. Aggregate tracker searches use a 30s timeout; every other API call uses 10s.
 
 Jackett:
 
@@ -349,6 +358,8 @@ The userscript allows only `localhost` and `127.0.0.1` by default. Add a matchin
 
 The Chrome, Firefox, and Tampermonkey settings panels never write a saved API key back into the page DOM. Leaving a key field blank preserves its saved value; the `Delete saved API key` checkbox explicitly clears it.
 
+As of v0.1.6 the Tampermonkey settings panel opens inside a closed shadow root, so page scripts cannot query the panel, reach it through `shadowRoot`, or read a key you type via `composedPath()`.
+
 ### Packaging
 
 Run from PowerShell:
@@ -359,10 +370,10 @@ Run from PowerShell:
 
 This creates:
 
-- `altyazidb-arr-bridge-chrome-0.1.5.zip`
-- `altyazidb-arr-bridge-firefox-0.1.5.zip`
-- `altyazidb-arr-bridge-firefox-0.1.5.xpi`
-- `release/altyazidb-arr-bridge-complete-0.1.5.zip`
+- `altyazidb-arr-bridge-chrome-0.1.6.zip`
+- `altyazidb-arr-bridge-firefox-0.1.6.zip`
+- `altyazidb-arr-bridge-firefox-0.1.6.xpi`
+- `release/altyazidb-arr-bridge-complete-0.1.6.zip`
 
 ### Troubleshooting
 
@@ -375,6 +386,7 @@ If Test Jackett fails in Firefox or Zen, check the following:
 2. **IPv6 trap** — On Windows, `localhost` resolves to `::1` (IPv6) first. Jackett binds to `127.0.0.1` (IPv4) only by default, so the browser tries `[::1]:9117` and the connection is refused.
    - **Fix A (recommended):** Use `http://127.0.0.1:9117` as the Base URL. This is the v0.1.3 default.
    - **Fix B:** Run `scripts/install-jackett-v6-proxy.ps1` as Administrator. It installs a `[::1]:9117 → 127.0.0.1:9117` netsh portproxy that is loopback-only (not exposed to the LAN).
+   - IPv6 addresses such as `http://[::1]:9117` cannot be written as browser match patterns. As of v0.1.6 the extension skips the permission pre-flight for those URLs (the browser still enforces host access) and reports failures with the localhost-specific message.
 
 3. **API key / 401** — Copy the `API Key` from the top of the Jackett `Dashboard` page into extension settings.
 

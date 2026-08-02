@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+## 0.1.6 - 2026-08-02
+
+Security:
+
+- Moved the Tampermonkey settings panel into a closed shadow root so page scripts can no longer read the API-key inputs, query the panel, or reach it through `shadowRoot` or `composedPath()`.
+- Stopped emitting `http://[::1]/*`-style host permission patterns, which are not valid browser match patterns and made `permissions.contains()` throw instead of answering; IPv6 service URLs now skip the pre-flight check and let the browser enforce host access.
+- Extended API-key redaction to `api_key`, `api-key`, and quoted JSON forms in failure details.
+- Resolved the remaining `adm-zip` and `brace-expansion` development advisories with scoped `npm` overrides; `npm audit` now reports zero vulnerabilities.
+- Restricted the CI workflow to read-only `contents` permission, disabled credential persistence on checkout, and made `npm audit --audit-level=high` a required step.
+
+Fixes:
+
+- Fixed duplicate button rows: a DOM mutation burst arriving while a render was still waiting on stored settings started a second render and mounted a second shell.
+- Fixed an unbounded render loop: the retry budget was reset on every mutation, so pages without detail markup polled the detail selectors indefinitely. Attempts now reset only on navigation or after a mounted shell is removed.
+- Fixed loopback detection for bracketed IPv6 hosts, so `http://[::1]:9117` failures again report the localhost-specific "check that the service is running" guidance instead of generic network advice.
+- Removed dead API-key control code in the options page and moved the save confirmation after the write actually completes.
+
+Performance:
+
+- Capped Prowlarr and Jackett alternative-title retries at three queries. Release-name parsing could previously produce up to ten variants, each fanning out to every enabled tracker.
+- Raised the timeout for aggregate tracker searches to 30s while keeping status, lookup, and add calls at 10s.
+- Resolved the detail containers once per extraction instead of re-running the same document queries in each parser helper.
+
+Improvements:
+
+- Prowlarr popup results now honour the configured result limit instead of a hard-coded cap of 8.
+- Result popups and the Tampermonkey settings panel close with `Escape`.
+- Added a DOM-level content-script test suite (render concurrency, retry budget, navigation recovery), IPv6/loopback config tests, search-cap and timeout tests, and a shadow-isolation assertion in the browser E2E run.
+
 ## 0.1.5 - 2026-07-26
 
 - Restricted service configuration and tab opening to credential-free HTTP/HTTPS URLs and configured service origins and reverse-proxy path prefixes; active schemes and redirects are rejected with explicit guidance.
