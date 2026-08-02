@@ -2,8 +2,8 @@
 
 ### 1) Optimization Summary
 
-- Current optimization health: runtime/network quick wins and mirror-drift guards are implemented; the main remaining cost is duplicated extension/Tampermonkey logic.
-- Implementation status (Unreleased): full-page `innerText`/`innerHTML` parsing, normal-search status preflights, duplicate strong-ID existing checks, unclamped limits, and incomplete Chrome/Firefox mirror verification are resolved. Chrome remains canonical and every non-manifest file is mirrored and byte-checked.
+- Current optimization health: runtime/network quick wins, render-loop bounds, and mirror-drift guards are implemented; the main remaining cost is duplicated extension/Tampermonkey logic.
+- Implementation status (0.1.6): full-page `innerText`/`innerHTML` parsing, normal-search status preflights, duplicate strong-ID existing checks, unclamped limits, unbounded tracker query fan-out, unbounded render retries, and incomplete Chrome/Firefox mirror verification are resolved. Chrome remains canonical and every non-manifest file is mirrored and byte-checked.
 - Top 3 highest-impact improvements:
   1. Consolidate shared parser/search/API logic so the extension and Tampermonkey script do not drift.
   2. Generate the Tampermonkey userscript from reviewed shared modules.
@@ -139,6 +139,9 @@
 - Completed: removed normal-search status preflights, clamped result limits, scoped parser inputs, short-circuited strong-ID existing checks, and kept Tampermonkey `@connect` local-only by default.
 - Completed: rejected redirects, unsafe URL schemes, credential URLs, malformed JSON, and untrusted open-URL messages.
 - Completed: eliminated saved API-key values from Chrome, Firefox, and Tampermonkey settings DOM; blank fields preserve keys and explicit per-service controls delete them.
+- Completed in 0.1.6: capped Prowlarr/Jackett alternative-title retries at three queries, split aggregate-search and plain-API timeouts, and resolved the parser's detail containers once per extraction.
+- Completed in 0.1.6: added an in-flight render guard and a real retry budget, removing duplicate shells and the endless render poll on pages without detail markup.
+- Completed in 0.1.6: isolated the Tampermonkey settings panel in a closed shadow root and stopped emitting invalid IPv6 host permission patterns.
 
 ### 4) Deeper Optimizations (Do Next)
 

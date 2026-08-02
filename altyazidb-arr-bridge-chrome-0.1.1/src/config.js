@@ -30,6 +30,16 @@
     jackett: "Jackett"
   };
 
+  // Release-name parsing can produce many title variants. Prowlarr and Jackett
+  // queries fan out to every enabled tracker, so only the strongest few
+  // alternatives are retried before falling back to the search page.
+  const MAX_SEARCH_ATTEMPTS = 3;
+
+  // Status and lookup endpoints answer quickly; aggregate tracker searches
+  // routinely need longer than a plain API call.
+  const REQUEST_TIMEOUT_MS = 10000;
+  const SEARCH_TIMEOUT_MS = 30000;
+
   const SUBTITLE_PATH_RE = /^\/(?:film|dizi|anime-filmleri|anime-dizileri|animasyon-filmleri|animasyon-dizileri|asya-filmleri|asya-dizileri|belgesel-filmleri|belgesel-dizileri|tv-programlari)\//i;
   const NON_SUBTITLE_PATH_RE = /^\/(?:forum|user|uploads|engine|index(?:\.php|\.html)?|search|page|lastnews|allnews|tags|stats|statistics|(?:register|login|lostpassword|autobackup)(?:\.php|\.html)?|admin(?:\.php)?)(?:\/|$|\?)/i;
 
@@ -82,11 +92,21 @@
     }
   }
 
+  // Returns "" when no valid pattern exists, which covers both invalid URLs and
+  // IPv6 literal hosts: browser match patterns cannot express `[::1]`, and
+  // passing such a pattern to permissions.contains() throws. Callers must treat
+  // an empty pattern as "cannot pre-check" and validate the URL separately.
   function hostPermissionPattern(baseUrl) {
-    try {
-      const parsed = new URL(normalizeBaseUrl(baseUrl, baseUrl));
+    const normalized = normalizeBaseUrl(baseUrl, baseUrl);
 
-      if (!["http:", "https:"].includes(parsed.protocol)) {
+    if (!normalized) {
+      return "";
+    }
+
+    try {
+      const parsed = new URL(normalized);
+
+      if (!["http:", "https:"].includes(parsed.protocol) || parsed.hostname.startsWith("[")) {
         return "";
       }
 
@@ -798,9 +818,24 @@
   }
 
   function isLocalhostUrl(baseUrl) {
+    const normalized = normalizeBaseUrl(baseUrl, baseUrl);
+
+    if (!normalized) {
+      return false;
+    }
+
     try {
-      const host = new URL(normalizeBaseUrl(baseUrl, baseUrl)).hostname;
-      return ["localhost", "127.0.0.1", "::1"].includes(host);
+      // URL.hostname keeps IPv6 literals bracketed, so `[::1]` must be unwrapped
+      // before it can be compared with the loopback address.
+      const host = new URL(normalized).hostname.toLowerCase().replace(/^\[|]$/g, "");
+
+      return (
+        host === "localhost" ||
+        host.endsWith(".localhost") ||
+        host === "::1" ||
+        host === "0:0:0:0:0:0:0:1" ||
+        /^127(?:\.\d{1,3}){3}$/.test(host)
+      );
     } catch (_error) {
       return false;
     }
@@ -859,6 +894,9 @@
   globalThis.AdbArrConfig = {
     DEFAULT_SETTINGS,
     SERVICE_LABELS,
+    MAX_SEARCH_ATTEMPTS,
+    REQUEST_TIMEOUT_MS,
+    SEARCH_TIMEOUT_MS,
     stripArrSuffix,
     normalizeSpace,
     normalizeBaseUrl,

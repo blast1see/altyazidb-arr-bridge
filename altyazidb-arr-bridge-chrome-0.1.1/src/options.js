@@ -112,15 +112,11 @@
 
       if (keyInput) {
         keyInput.value = "";
-        keyInput.disabled = Boolean(clearControl?.checked);
+        keyInput.disabled = false;
       }
 
       if (clearControl) {
         clearControl.checked = false;
-      }
-
-      if (keyInput) {
-        keyInput.disabled = false;
       }
     }
   }
@@ -224,7 +220,7 @@
     }
 
     return new Promise((resolve) => {
-      permissionsApi.contains({ origins }, resolve);
+      permissionsApi.contains({ origins }, (allowed) => resolve(Boolean(allowed)));
     });
   }
 
@@ -238,7 +234,7 @@
     }
 
     return new Promise((resolve) => {
-      permissionsApi.request({ origins }, resolve);
+      permissionsApi.request({ origins }, (granted) => resolve(Boolean(granted)));
     });
   }
 
@@ -390,14 +386,15 @@
     try {
       const granted = await requestHostPermissions(settings);
 
-      if (!granted) {
-        setStatus("Settings saved, but custom host permission was not granted.", "warn");
-      } else {
-        setStatus("Settings saved.", "success");
-      }
-
       await storeSettings(settings);
       writeForm(settings);
+
+      setStatus(
+        granted
+          ? "Settings saved."
+          : "Settings saved, but custom host permission was not granted.",
+        granted ? "success" : "warn"
+      );
     } catch (error) {
       setStatus(error.message || "Settings could not be saved", "error");
     } finally {

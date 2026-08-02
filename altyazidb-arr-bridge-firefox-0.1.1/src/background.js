@@ -158,10 +158,10 @@ function redactSensitive(value, apiKey = "") {
     }
   }
 
-  return redacted.replace(/(apikey\s*[=:]\s*)[^&\s<>'"]+/gi, "$1[REDACTED]");
+  return redacted.replace(/(api[-_]?key"?\s*[=:]\s*"?)[^&\s<>'"]+/gi, "$1[REDACTED]");
 }
 
-async function fetchWithTimeout(url, options, timeoutMs = 10000) {
+async function fetchWithTimeout(url, options, timeoutMs = CFG.REQUEST_TIMEOUT_MS) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -188,16 +188,19 @@ async function callArrApi(service, settings, path, params = {}, options = {}) {
     throw new ArrBridgeError("missingKey", `${label} API key missing`);
   }
 
-  const hostPattern = CFG.hostPermissionPattern(baseUrl);
-
-  if (!hostPattern) {
+  if (!CFG.normalizeBaseUrl(baseUrl, "")) {
     throw new ArrBridgeError(
       "invalidUrl",
       `${label} URL is invalid. Check the configured protocol, host, and port.`
     );
   }
 
-  if (!(await permissionContains([hostPattern]))) {
+  // An empty pattern means the host cannot be expressed as a match pattern
+  // (IPv6 literals). The browser still enforces host access for the request, so
+  // only skip the pre-flight check instead of refusing a valid URL.
+  const hostPattern = CFG.hostPermissionPattern(baseUrl);
+
+  if (hostPattern && !(await permissionContains([hostPattern]))) {
     throw new ArrBridgeError(
       "permission",
       `${label} host permission is missing for ${hostPattern}. Open the extension settings and grant access before retrying.`
@@ -223,11 +226,15 @@ async function callArrApi(service, settings, path, params = {}, options = {}) {
   let text;
 
   try {
-    ({ response, text } = await fetchWithTimeout(url, {
-      method: options.method || "GET",
-      headers,
-      body: options.body ? JSON.stringify(options.body) : undefined
-    }));
+    ({ response, text } = await fetchWithTimeout(
+      url,
+      {
+        method: options.method || "GET",
+        headers,
+        body: options.body ? JSON.stringify(options.body) : undefined
+      },
+      options.timeoutMs || CFG.REQUEST_TIMEOUT_MS
+    ));
   } catch (error) {
     throw new ArrBridgeError("connect", fetchFailureMessage(service, baseUrl, error));
   }
@@ -249,11 +256,11 @@ async function callArrApi(service, settings, path, params = {}, options = {}) {
   }
 
   if (!response.ok) {
-    const detail = redactSensitive(text, apiKey).slice(0, 180);
+    const detail = CFG.normalizeSpace(redactSensitive(text, apiKey)).slice(0, 180);
 
     throw new ArrBridgeError(
       "api",
-      `${label} API request failed (${response.status})${detail ? `: ${detail.slice(0, 180)}` : ""}`
+      `${label} API request failed (${response.status})${detail ? `: ${detail}` : ""}`
     );
   }
 
@@ -514,16 +521,18 @@ async function lookupArr(service, media, settings) {
 async function lookupProwlarr(media, settings) {
   const searchPlan = CFG.buildSearchPlan("prowlarr", media);
   searchPlan.apiParams.limit = settings.prowlarrLimit;
-  const searchPlans = CFG.prowlarrTerms(media).map((query) => ({
-    ...searchPlan,
-    term: query,
-    fallbackTerm: query,
-    apiParams: {
-      ...searchPlan.apiParams,
-      query,
-      limit: settings.prowlarrLimit
-    }
-  }));
+  const searchPlans = CFG.prowlarrTerms(media)
+    .slice(0, CFG.MAX_SEARCH_ATTEMPTS)
+    .map((query) => ({
+      ...searchPlan,
+      term: query,
+      fallbackTerm: query,
+      apiParams: {
+        ...searchPlan.apiParams,
+        query,
+        limit: settings.prowlarrLimit
+      }
+    }));
   const plans = searchPlans.length ? searchPlans : [searchPlan];
 
   const fallbackUrl = fallbackUrlForService("prowlarr", settings, plans[0]);
@@ -553,7 +562,8 @@ async function lookupProwlarr(media, settings) {
       "prowlarr",
       settings,
       plan.apiPath,
-      plan.apiParams
+      plan.apiParams,
+      { timeoutMs: CFG.SEARCH_TIMEOUT_MS }
     );
     if (!Array.isArray(data)) {
       throw new ArrBridgeError("invalidResponse", "Prowlarr returned an invalid response");
@@ -586,7 +596,7 @@ async function lookupProwlarr(media, settings) {
       mode: "showPopupResults",
       searchTerm: activePlan.term,
       fallbackUrl: activeFallbackUrl,
-      results: releases.slice(0, 8).map((result) => ({
+      results: releases.slice(0, settings.prowlarrLimit).map((result) => ({
         ...CFG.summarizeRelease(result),
         searchTerm: activePlan.term
       }))
@@ -606,15 +616,17 @@ async function lookupProwlarr(media, settings) {
 
 async function lookupJackett(media, settings) {
   const searchPlan = CFG.buildSearchPlan("jackett", media);
-  const searchPlans = CFG.jackettTerms(media).map((query) => ({
-    ...searchPlan,
-    term: query,
-    fallbackTerm: query,
-    apiParams: {
-      ...searchPlan.apiParams,
-      Query: query
-    }
-  }));
+  const searchPlans = CFG.jackettTerms(media)
+    .slice(0, CFG.MAX_SEARCH_ATTEMPTS)
+    .map((query) => ({
+      ...searchPlan,
+      term: query,
+      fallbackTerm: query,
+      apiParams: {
+        ...searchPlan.apiParams,
+        Query: query
+      }
+    }));
   const plans = searchPlans.length ? searchPlans : [searchPlan];
   const fallbackUrl = fallbackUrlForService("jackett", settings, plans[0]);
 
@@ -649,7 +661,8 @@ async function lookupJackett(media, settings) {
       "jackett",
       settings,
       apiPath,
-      plan.apiParams
+      plan.apiParams,
+      { timeoutMs: CFG.SEARCH_TIMEOUT_MS }
     );
 
     if (!data || !Array.isArray(data.Results)) {

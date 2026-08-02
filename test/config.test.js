@@ -51,6 +51,40 @@ test("Firefox-compatible host patterns drop ports", () => {
   assert.equal(config.hostPermissionPattern("http://[broken"), "");
 });
 
+test("IPv6 literal hosts produce no match pattern", () => {
+  // Browser match patterns cannot express bracketed IPv6 hosts, and passing
+  // one to permissions.contains() throws instead of returning false.
+  for (const baseUrl of ["http://[::1]:9117", "http://[fe80::1]:8989", "[::1]:7878"]) {
+    assert.equal(config.hostPermissionPattern(baseUrl), "");
+  }
+
+  assert.notEqual(config.normalizeBaseUrl("http://[::1]:9117", ""), "");
+});
+
+test("loopback detection covers IPv6, 127.0.0.0/8, and .localhost", () => {
+  for (const baseUrl of [
+    "http://localhost:7878",
+    "http://arr.localhost:7878",
+    "http://127.0.0.1:7878",
+    "http://127.1.2.3:7878",
+    "http://[::1]:9117",
+    "[::1]:9117",
+    "http://[0:0:0:0:0:0:0:1]:9117"
+  ]) {
+    assert.equal(config.isLocalhostUrl(baseUrl), true, baseUrl);
+  }
+
+  for (const baseUrl of [
+    "http://192.168.1.25:7878",
+    "https://arr.example.test",
+    "http://notlocalhost.example",
+    "http://[broken",
+    ""
+  ]) {
+    assert.equal(config.isLocalhostUrl(baseUrl), false, baseUrl);
+  }
+});
+
 test("safe result URLs allow only credential-free HTTP(S)", () => {
   assert.equal(
     config.safeHttpUrl("http://tracker.example/details/41"),

@@ -1,6 +1,6 @@
 /* eslint-disable no-console */
 /**
- * End-to-end verification for AltyaziDB Arr Bridge v0.1.5.
+ * End-to-end verification for the AltyaziDB Arr Bridge extension.
  * Launches system Chrome with the unpacked extension loaded, visits
  * forum + subtitle URLs, and reports button/shell state.
  *
