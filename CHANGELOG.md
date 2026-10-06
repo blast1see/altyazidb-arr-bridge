@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+Security:
+
+- Updated `web-ext` to 10.7.0 and the scoped `adm-zip` (0.6.1) and `brace-expansion` (1.1.21) overrides, and refreshed the lockfile, which also moves `undici`, `fast-uri`, `js-yaml` and `source-map-js` to patched versions. All are development dependencies of `web-ext`; the extension and the userscript are unchanged.
+- The CI audit step is now `scripts/audit-check.js`: it still fails on every high or critical advisory, but accepts the ones listed in it with a reason. One is listed: `node-forge` (GHSA-86w9-cpqp-85rv) has no fixed release, and is reached only through `web-ext`'s Firefox for Android runner, which `web-ext lint` never loads. The script says when a listed advisory is no longer reported, so the exception does not outlive the problem.
+
 ## 0.1.6 - 2026-08-02
 
 Security:

@@ -43,4 +43,4 @@ jobs:
         run: npm run lint:firefox
 
       - name: Audit dependencies
-        run: npm audit --audit-level=high
+        run: node scripts/audit-check.js
