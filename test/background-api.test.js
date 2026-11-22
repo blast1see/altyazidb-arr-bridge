@@ -22,65 +22,127 @@ function response(body, status = 200, extra = {}) {
   };
 }
 
+// `api: "browser"` exposes promise-returning `browser.*` APIs (Firefox);
+// `api: "chrome"` exposes callback-style `chrome.*` APIs that report failures
+// through `chrome.runtime.lastError`. `failures` maps an API name
+// (storageGet, storageSet, tabsCreate, permissionsContains) to an error
+// message that the API reports instead of succeeding.
 function createHarness({
   settings = {},
   permissionAllowed = true,
-  fetchImpl = async () => response([])
+  fetchImpl = async () => response([]),
+  api = "browser",
+  failures = {}
 } = {}) {
   const requests = [];
   const openedTabs = [];
   const timeouts = [];
   const permissionQueries = [];
   let messageHandler;
+  let installedHandler;
 
-  const browser = {
-    runtime: {
-      id: "adb-test-extension",
-      getURL(pathname = "") {
-        return `moz-extension://adb-test-extension/${pathname}`;
-      },
-      onInstalled: {
-        addListener() {}
-      },
-      onMessage: {
-        addListener(listener) {
-          messageHandler = listener;
+  const runtime = {
+    id: "adb-test-extension",
+    lastError: undefined,
+    getURL(pathname = "") {
+      return `moz-extension://adb-test-extension/${pathname}`;
+    },
+    onInstalled: {
+      addListener(listener) {
+        installedHandler = listener;
+      }
+    },
+    onMessage: {
+      addListener(listener) {
+        messageHandler = listener;
+      }
+    }
+  };
+
+  // Each operation either returns a value or throws; the wrappers below turn
+  // that into a rejected promise (browser) or a lastError callback (chrome).
+  const operations = {
+    storageGet(defaults) {
+      return { ...defaults, ...settings };
+    },
+    storageSet() {
+      return undefined;
+    },
+    tabsCreate({ url }) {
+      openedTabs.push(url);
+      return { url };
+    },
+    permissionsContains({ origins } = {}) {
+      permissionQueries.push(...(origins || []));
+
+      for (const origin of origins || []) {
+        // Mirror the browser: an IPv6 literal is not a valid match pattern.
+        if (/\/\/\[/.test(origin)) {
+          throw new Error(`Invalid value for origins: ${origin}`);
         }
       }
-    },
-    storage: {
-      local: {
-        async get(defaults) {
-          return { ...defaults, ...settings };
-        },
-        async set() {}
-      }
-    },
-    tabs: {
-      async create({ url }) {
-        openedTabs.push(url);
-        return { url };
-      }
-    },
-    permissions: {
-      async contains({ origins } = {}) {
-        permissionQueries.push(...(origins || []));
 
-        for (const origin of origins || []) {
-          // Mirror the browser: an IPv6 literal is not a valid match pattern.
-          if (/\/\/\[/.test(origin)) {
-            throw new Error(`Invalid value for origins: ${origin}`);
+      return permissionAllowed;
+    }
+  };
+
+  function promiseApi(name) {
+    return async (arg) => {
+      if (failures[name]) {
+        throw new Error(failures[name]);
+      }
+
+      return operations[name](arg);
+    };
+  }
+
+  function callbackApi(name) {
+    return (arg, callback) => {
+      queueMicrotask(() => {
+        let value;
+        let errorMessage = failures[name];
+
+        if (!errorMessage) {
+          try {
+            value = operations[name](arg);
+          } catch (error) {
+            errorMessage = error.message;
           }
         }
 
-        return permissionAllowed;
+        runtime.lastError = errorMessage ? { message: errorMessage } : undefined;
+
+        try {
+          if (typeof callback === "function") {
+            callback(errorMessage ? undefined : value);
+          }
+        } finally {
+          runtime.lastError = undefined;
+        }
+      });
+    };
+  }
+
+  const wrap = api === "chrome" ? callbackApi : promiseApi;
+  const extensionApi = {
+    runtime,
+    storage: {
+      local: {
+        get: wrap("storageGet"),
+        set: wrap("storageSet")
       }
+    },
+    tabs: {
+      create: wrap("tabsCreate")
+    },
+    permissions: {
+      contains: wrap("permissionsContains")
     }
   };
   const sandbox = {
     AbortController,
     URL,
-    browser,
+    ...(api === "chrome" ? { chrome: extensionApi } : { browser: extensionApi }),
     clearTimeout,
     console,
     fetch: async (url, options) => {
@@ -104,10 +166,39 @@ function createHarness({
     permissionQueries,
     requests,
     timeouts,
+    install() {
+      return installedHandler?.();
+    },
     send(message, sender = { id: "adb-test-extension" }) {
-      return messageHandler(message, sender);
+      if (api !== "chrome") {
+        return messageHandler(message, sender);
+      }
+
+      return new Promise((resolve, reject) => {
+        let keepsChannelOpen;
+
+        try {
+          keepsChannelOpen = messageHandler(message, sender, resolve);
+        } catch (error) {
+          reject(error);
+          return;
+        }
+
+        if (keepsChannelOpen !== true) {
+          reject(new Error("chrome onMessage listener must return true for async replies"));
+        }
+      });
     }
   };
+}
+
+// Both message paths must answer with a response object, never a rejection.
+async function settle(promise) {
+  try {
+    return { value: await promise };
+  } catch (error) {
+    return { rejected: error };
+  }
 }
 
 test("Radarr and Sonarr lookup APIs return popup results", async () => {
@@ -1091,4 +1182,358 @@ test("magnet and active result URLs fall back to the configured search page", as
     assert.equal(new URL(result.openedUrl).pathname, "/search");
     assert.equal(new URL(result.openedUrl).searchParams.get("query"), "Movie 2024");
   }
+});
+
+const AUTO_ADD_SERVICES = {
+  radarr: {
+    settings: {
+      behavior: "autoAdd",
+      radarrApiKey: "radarr-key",
+      radarrRootFolderPath: "/movies",
+      radarrQualityProfileId: "1"
+    },
+    lookupPath: "/api/v3/movie/lookup",
+    itemPath: "/api/v3/movie",
+    mediaType: "movie",
+    idMedia: { tmdbId: 101, tmdbType: "movie" },
+    idResult: { tmdbId: 101 }
+  },
+  sonarr: {
+    settings: {
+      behavior: "autoAdd",
+      sonarrApiKey: "sonarr-key",
+      sonarrRootFolderPath: "/series",
+      sonarrQualityProfileId: "2"
+    },
+    lookupPath: "/api/v3/series/lookup",
+    itemPath: "/api/v3/series",
+    mediaType: "series",
+    idMedia: { tvdbId: 202 },
+    idResult: { tvdbId: 202 }
+  }
+};
+
+function autoAddHarness(service, lookupResults) {
+  const config = AUTO_ADD_SERVICES[service];
+  const posted = [];
+  const harness = createHarness({
+    settings: config.settings,
+    fetchImpl(url, options) {
+      const pathname = new URL(url).pathname;
+
+      if (pathname.startsWith(config.lookupPath)) {
+        return response(lookupResults);
+      }
+
+      if (pathname === config.itemPath && options.method === "POST") {
+        posted.push(JSON.parse(options.body));
+        return response({ titleSlug: "added-item" });
+      }
+
+      if (pathname === config.itemPath) {
+        return response([]);
+      }
+
+      throw new Error(`Unexpected request: ${url}`);
+    }
+  });
+
+  return { harness, posted };
+}
+
+function writeRequests(harness) {
+  return harness.requests.filter((request) =>
+    (request.options.method || "GET") !== "GET"
+  );
+}
+
+test("auto-add only posts an exact match and otherwise opens the add search", async (t) => {
+  for (const service of ["radarr", "sonarr"]) {
+    const config = AUTO_ADD_SERVICES[service];
+    const label = service === "radarr" ? "Radarr" : "Sonarr";
+
+    await t.test(`${service}: unrelated title opens the add search instead`, async () => {
+      const { harness, posted } = autoAddHarness(service, [
+        { title: "Completely Different", year: 2024, tmdbId: 999, tvdbId: 999, titleSlug: "wrong" }
+      ]);
+      const result = await harness.send({
+        type: "ADB_LOOKUP",
+        service,
+        media: { title: "Wanted Title", year: 2024, mediaType: config.mediaType }
+      });
+
+      assert.equal(posted.length, 0);
+      assert.deepEqual(writeRequests(harness), []);
+      assert.equal(result.ok, true);
+      assert.equal(result.opened, true);
+      assert.match(result.message, new RegExp(`No exact match; opened ${label} add search`));
+      assert.equal(harness.openedTabs.length, 1);
+      assert.equal(new URL(harness.openedTabs[0]).pathname, "/add/new");
+      assert.equal(new URL(harness.openedTabs[0]).searchParams.get("term"), "Wanted Title 2024");
+      assert.equal(result.openedUrl, harness.openedTabs[0]);
+    });
+
+    await t.test(`${service}: same title with a different year does not post`, async () => {
+      const { harness, posted } = autoAddHarness(service, [
+        { title: "Wanted Title", year: 1999, tmdbId: 999, tvdbId: 999, titleSlug: "remake" }
+      ]);
+      const result = await harness.send({
+        type: "ADB_LOOKUP",
+        service,
+        media: { title: "Wanted Title", year: 2024, mediaType: config.mediaType }
+      });
+
+      assert.equal(posted.length, 0);
+      assert.deepEqual(writeRequests(harness), []);
+      assert.equal(result.ok, true);
+      assert.equal(result.opened, true);
+      assert.match(result.message, /No exact match/);
+    });
+
+    await t.test(`${service}: same title and year posts, ignoring Turkish letters and punctuation`, async () => {
+      const { harness, posted } = autoAddHarness(service, [
+        { title: "Other Show", year: 2024, tmdbId: 1, tvdbId: 1, titleSlug: "first" },
+        { title: "Cilgin Kiz - Sohret!", year: 2024, tmdbId: 2, tvdbId: 2, titleSlug: "second" }
+      ]);
+      const result = await harness.send({
+        type: "ADB_LOOKUP",
+        service,
+        media: { title: "Çılgın Kız: Şöhret", year: 2024, mediaType: config.mediaType }
+      });
+
+      assert.equal(result.ok, true);
+      assert.equal(posted.length, 1);
+      assert.equal(posted[0].titleSlug, "second");
+      assert.equal(writeRequests(harness).length, 1);
+    });
+
+    await t.test(`${service}: a strong ID match posts even when the title differs`, async () => {
+      const { harness, posted } = autoAddHarness(service, [
+        { title: "Localized Name", year: 2024, ...config.idResult, titleSlug: "by-id" }
+      ]);
+      const result = await harness.send({
+        type: "ADB_LOOKUP",
+        service,
+        media: {
+          title: "Wanted Title",
+          year: 2024,
+          mediaType: config.mediaType,
+          ...config.idMedia
+        }
+      });
+
+      assert.equal(result.ok, true);
+      assert.equal(posted.length, 1);
+      assert.equal(posted[0].titleSlug, "by-id");
+    });
+  }
+});
+
+test("open result falls back to the add page when the existing-item check fails", async (t) => {
+  const failures = {
+    network: () => {
+      throw new TypeError("NetworkError when attempting to fetch resource");
+    },
+    "rejected key": () => response({ message: "denied" }, 401)
+  };
+
+  for (const [name, fetchImpl] of Object.entries(failures)) {
+    await t.test(name, async () => {
+      const harness = createHarness({
+        settings: { radarrApiKey: "radarr-key" },
+        fetchImpl
+      });
+      const outcome = await settle(harness.send({
+        type: "ADB_OPEN_RESULT",
+        service: "radarr",
+        media: { title: "Movie", year: 2024 },
+        result: { title: "Movie", year: 2024, tmdbId: 101 }
+      }));
+
+      assert.equal(outcome.rejected, undefined);
+      assert.equal(outcome.value.ok, true);
+      assert.equal(harness.requests.length, 1);
+      assert.equal(harness.openedTabs.length, 1);
+      assert.equal(new URL(harness.openedTabs[0]).pathname, "/add/new");
+      assert.equal(new URL(harness.openedTabs[0]).searchParams.get("term"), "tmdb:101");
+    });
+  }
+});
+
+test("open result reports invalid service URLs without opening a tab", async (t) => {
+  for (const api of ["browser", "chrome"]) {
+    for (const [service, label] of [
+      ["radarr", "Radarr"],
+      ["sonarr", "Sonarr"],
+      ["prowlarr", "Prowlarr"],
+      ["jackett", "Jackett"]
+    ]) {
+      await t.test(`${api} ${service}`, async () => {
+        const harness = createHarness({
+          api,
+          settings: { [`${service}BaseUrl`]: "http://[broken" }
+        });
+        const outcome = await settle(harness.send({
+          type: "ADB_OPEN_RESULT",
+          service,
+          media: { title: "Movie", year: 2024 },
+          result: { title: "Movie", year: 2024 }
+        }));
+
+        assert.equal(outcome.rejected, undefined);
+        assert.equal(outcome.value.ok, false);
+        assert.match(outcome.value.error, new RegExp(`^${label} URL is invalid\\.`));
+        assert.deepEqual(harness.openedTabs, []);
+      });
+    }
+  }
+});
+
+test("open messages answer with an error when the tab cannot be opened", async (t) => {
+  for (const api of ["browser", "chrome"]) {
+    await t.test(`${api} ADB_OPEN_URL`, async () => {
+      const harness = createHarness({
+        api,
+        settings: { radarrBaseUrl: "https://arr.example.test/radarr" },
+        failures: { tabsCreate: "No current window" }
+      });
+      const outcome = await settle(harness.send({
+        type: "ADB_OPEN_URL",
+        service: "radarr",
+        url: "https://arr.example.test/radarr/add/new?term=Movie"
+      }));
+
+      assert.equal(outcome.rejected, undefined);
+      assert.equal(outcome.value.ok, false);
+      assert.notEqual(outcome.value.opened, true);
+      assert.match(outcome.value.error, /No current window/);
+    });
+
+    await t.test(`${api} ADB_OPEN_RESULT`, async () => {
+      const harness = createHarness({
+        api,
+        failures: { tabsCreate: "No current window" }
+      });
+      const outcome = await settle(harness.send({
+        type: "ADB_OPEN_RESULT",
+        service: "prowlarr",
+        media: { title: "Movie", year: 2024 },
+        result: { title: "Movie.2024", infoUrl: "https://tracker.example/details/1" }
+      }));
+
+      assert.equal(outcome.rejected, undefined);
+      assert.equal(outcome.value.ok, false);
+      assert.match(outcome.value.error, /No current window/);
+    });
+  }
+});
+
+test("open result errors never expose the API key", async (t) => {
+  const secret = "radarr-secret-value";
+
+  for (const api of ["browser", "chrome"]) {
+    await t.test(api, async () => {
+      const harness = createHarness({
+        api,
+        settings: { radarrApiKey: secret },
+        fetchImpl: () => response([]),
+        failures: {
+          tabsCreate: `Cannot open http://127.0.0.1:7878/?apikey=${secret}&x=1 (${secret})`
+        }
+      });
+      const outcome = await settle(harness.send({
+        type: "ADB_OPEN_RESULT",
+        service: "radarr",
+        media: { title: "Movie", year: 2024 },
+        result: { title: "Movie", year: 2024, tmdbId: 101 }
+      }));
+
+      assert.equal(outcome.rejected, undefined);
+      assert.equal(outcome.value.ok, false);
+      assert.doesNotMatch(outcome.value.error, new RegExp(secret));
+      assert.doesNotMatch(outcome.value.error, /apikey=(?!\[REDACTED\])/i);
+    });
+  }
+});
+
+test("chrome callback APIs surface runtime.lastError", async (t) => {
+  await t.test("successful callbacks still work", async () => {
+    const harness = createHarness({
+      api: "chrome",
+      settings: { radarrBaseUrl: "https://arr.example.test/radarr" }
+    });
+    const result = await harness.send({
+      type: "ADB_OPEN_URL",
+      service: "radarr",
+      url: "https://arr.example.test/radarr/add/new?term=Movie"
+    });
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(harness.openedTabs, ["https://arr.example.test/radarr/add/new?term=Movie"]);
+  });
+
+  await t.test("storage.local.get", async () => {
+    const harness = createHarness({
+      api: "chrome",
+      settings: { radarrApiKey: "radarr-key" },
+      failures: { storageGet: "Storage is unavailable" }
+    });
+    const result = await harness.send({ type: "ADB_TEST_CONNECTION", service: "radarr" });
+
+    assert.equal(result.ok, false);
+    assert.match(result.error, /Storage is unavailable/);
+    assert.equal(harness.requests.length, 0);
+  });
+
+  await t.test("permissions.contains", async () => {
+    const harness = createHarness({
+      api: "chrome",
+      settings: { behavior: "showPopupResults", radarrApiKey: "radarr-key" },
+      failures: { permissionsContains: "Permission query failed" }
+    });
+    const result = await harness.send({
+      type: "ADB_LOOKUP",
+      service: "radarr",
+      media: { title: "Movie", year: 2024, mediaType: "movie" }
+    });
+
+    assert.equal(result.ok, false);
+    assert.match(result.error, /Permission query failed/);
+    assert.equal(harness.requests.length, 0);
+  });
+
+  await t.test("tabs.create during lookup", async () => {
+    const harness = createHarness({
+      api: "chrome",
+      settings: { behavior: "openSearchPage", radarrApiKey: "radarr-key" },
+      fetchImpl: () => response([{ tmdbId: 101, titleSlug: "existing-movie" }]),
+      failures: { tabsCreate: "No current window" }
+    });
+    const result = await harness.send({
+      type: "ADB_LOOKUP",
+      service: "radarr",
+      media: { title: "Movie", mediaType: "movie", tmdbId: 101, tmdbType: "movie" }
+    });
+
+    assert.equal(result.ok, false);
+    assert.notEqual(result.opened, true);
+    assert.match(result.error, /No current window/);
+  });
+
+  await t.test("tabs.create during no-key fallback", async () => {
+    const harness = createHarness({
+      api: "chrome",
+      settings: { radarrApiKey: "" },
+      failures: { tabsCreate: "No current window" }
+    });
+    const result = await harness.send({
+      type: "ADB_LOOKUP",
+      service: "radarr",
+      media: { title: "Movie", mediaType: "movie" }
+    });
+
+    assert.equal(result.ok, false);
+    assert.notEqual(result.opened, true);
+    assert.match(result.error, /No current window/);
+  });
 });
