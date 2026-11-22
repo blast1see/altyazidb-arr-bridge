@@ -7,14 +7,10 @@
 
 const { spawnSync } = require("child_process");
 
-const ACCEPTED = {
-  // node-forge <= 1.4.0, and 1.4.0 is the latest release (checked 2026-10-06).
-  // Reached only through web-ext -> @devicefarmer/adbkit, which web-ext loads to run
-  // an extension on Firefox for Android; this project runs `web-ext lint` only, and
-  // none of it ships in the extension or the userscript. Remove once node-forge
-  // publishes a fixed version.
-  "GHSA-86w9-cpqp-85rv": "node-forge RSA PKCS#1 v1.5 signature verification"
-};
+// Each entry: advisory id -> reason, with the latest release checked and why the
+// affected code is not reached by anything this project runs or ships. Empty since
+// node-forge 1.4.3 fixed GHSA-86w9-cpqp-85rv (checked 2026-11-22).
+const ACCEPTED = {};
 
 const BLOCKING = new Set(["high", "critical"]);
 
