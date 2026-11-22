@@ -4,8 +4,8 @@
 
 Security:
 
-- Updated `web-ext` to 10.7.0 and the scoped `adm-zip` (0.6.1) and `brace-expansion` (1.1.21) overrides, and refreshed the lockfile, which also moves `undici`, `fast-uri`, `js-yaml` and `source-map-js` to patched versions. All are development dependencies of `web-ext`; the extension and the userscript are unchanged.
-- The CI audit step is now `scripts/audit-check.js`: it still fails on every high or critical advisory, but accepts the ones listed in it with a reason. One is listed: `node-forge` (GHSA-86w9-cpqp-85rv) has no fixed release, and is reached only through `web-ext`'s Firefox for Android runner, which `web-ext lint` never loads. The script says when a listed advisory is no longer reported, so the exception does not outlive the problem.
+- Updated `web-ext` to 10.8.0 and `puppeteer-core` to 25.18.1, kept the scoped `adm-zip` (0.6.1) and `brace-expansion` (1.1.21) overrides, and dropped the `shell-quote` override: `web-ext` 10.8.0 brings `fx-runner` 1.7.0, which pins the patched `shell-quote` 1.11.0 (GHSA-pqg4-j6r4-53mv). The refreshed lockfile also moves `node-forge` to 1.4.3, `undici` to 7.30.2, `zod` to 4.6.7 (through `chromium-bidi`), and `fast-uri`, `js-yaml` and `source-map-js` to patched versions. `npm audit` reports no advisories. All are development dependencies; the extension and the userscript are unchanged.
+- The CI audit step is now `scripts/audit-check.js`: it still fails on every high or critical advisory, but accepts the ones listed in it with a reason. None is listed: `node-forge` 1.4.3 fixed GHSA-86w9-cpqp-85rv, the only advisory that once had no fixed release. The script says when a listed advisory is no longer reported, so an exception does not outlive the problem.
 
 Fixes:
 
