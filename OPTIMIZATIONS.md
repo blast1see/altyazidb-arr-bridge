@@ -14,11 +14,13 @@
 
 #### Finding 1: Shared logic is duplicated across extension and Tampermonkey builds
 
+- **Status**: Drift is now detected, not removed. `test/userscript-parity.test.js` runs the userscript's pure functions (season/episode, media type, year, page gate, search terms and plans, URL and settings normalization, auto-add exact match) against the extension's on the same vectors, so a fix applied to only one copy fails `npm test`. Generating both from one shared core has still not been done.
+
 - **Title**: Shared logic is duplicated across extension and Tampermonkey builds
 - **Category**: Build / Maintainability / Cost
 - **Severity**: High
 - **Impact**: Reduces bundle size, review surface, bug drift, and future optimization cost.
-- **Evidence**: `altyazidb-arr-bridge-chrome-0.1.0/src/config.js:131` defines `buildSearchPlan`, while `tampermonkey/altyazidb-arr-bridge.user.js:233` duplicates it. `src/content.js:337` defines `extractMedia`, duplicated at `tampermonkey/altyazidb-arr-bridge.user.js:1153`. `src/background.js:260` defines `lookupArr`, duplicated at `tampermonkey/altyazidb-arr-bridge.user.js:551`. The Tampermonkey script is 1,810 lines / 61,633 characters, largely combining extension config, parser, API, UI, and settings code.
+- **Evidence**: `altyazidb-arr-bridge-chrome-0.1.1/src/config.js:704` defines `buildSearchPlan`, while `tampermonkey/altyazidb-arr-bridge.user.js:718` duplicates it. `src/content.js:372` defines `extractMedia`, duplicated at `tampermonkey/altyazidb-arr-bridge.user.js:2163`. `src/background.js:514` defines `lookupArr`, duplicated at `tampermonkey/altyazidb-arr-bridge.user.js:1246`. The Tampermonkey script is 3,453 lines / 123,024 characters, largely combining extension config, parser, API, UI, and settings code.
 - **Why it’s inefficient**: Any parser, API, security, or performance fix must be implemented and tested multiple times. This increases maintenance cost and makes optimization regressions likely.
 - **Recommended fix**: Extract a shared core for config normalization, media extraction, search planning, API result normalization, and common UI helpers. Generate the Tampermonkey script and Chrome/Firefox packages from that core. Keep Chrome as the canonical extension target and generate Firefox manifest differences.
 - **Tradeoffs / Risks**: Adds a small packaging/generation step. Tampermonkey still needs a final bundled userscript artifact.
@@ -96,7 +98,7 @@
 - **Category**: Security / Reliability / Cost
 - **Severity**: Medium
 - **Impact**: Reduces security-impacting inefficiency and accidental network reach.
-- **Evidence**: Chrome and Firefox manifests declare broad optional host permissions at `altyazidb-arr-bridge-chrome-0.1.0/manifest.json:34-36` and `altyazidb-arr-bridge-firefox-0.1.0/manifest.json:34-36`. Tampermonkey grants `@connect *` at `tampermonkey/altyazidb-arr-bridge.user.js:15`.
+- **Evidence**: Chrome and Firefox manifests declare broad optional host permissions at `altyazidb-arr-bridge-chrome-0.1.1/manifest.json:32-35` and `altyazidb-arr-bridge-firefox-0.1.1/manifest.json:30-33`. Tampermonkey now declares only `@connect localhost` and `@connect 127.0.0.1` at `tampermonkey/altyazidb-arr-bridge.user.js:24-25`.
 - **Why it’s inefficient**: Broad network capability means a future bug or injection flaw can amplify requests to arbitrary origins. It also makes permission prompts less precise.
 - **Recommended fix**: Keep default permissions limited to localhost/127.0.0.1. For custom Arr hosts, document that users should add explicit host entries, or provide separate local-only and custom-host script variants. For extension builds, keep optional host requests origin-specific and avoid broad defaults unless browser packaging requires them.
 - **Tradeoffs / Risks**: Users with non-localhost Arr instances may need one manual metadata/manifest edit or a custom build.
@@ -112,7 +114,7 @@
 - **Category**: Build / Maintainability
 - **Severity**: Medium
 - **Impact**: Reduces repository size, package drift, and review noise.
-- **Evidence**: `altyazidb-arr-bridge-chrome-0.1.0` and `altyazidb-arr-bridge-firefox-0.1.0` contain duplicate copies of `src/background.js`, `src/config.js`, `src/content.js`, `src/options.js`, styles, assets, docs, and HTML. The main difference is manifest background shape: Chrome uses `background.service_worker`; Firefox uses `background.scripts`.
+- **Evidence**: `altyazidb-arr-bridge-chrome-0.1.1` and `altyazidb-arr-bridge-firefox-0.1.1` contain duplicate copies of `src/background.js`, `src/config.js`, `src/content.js`, `src/options.js`, styles, assets, docs, and HTML. The main difference is manifest background shape: Chrome uses `background.service_worker`; Firefox uses `background.scripts`.
 - **Why it’s inefficient**: Keeping expanded build artifacts as source-like directories makes it easy to edit the wrong copy and difficult to know which code is canonical.
 - **Recommended fix**: Store one canonical source tree plus a packaging script that emits `dist/chrome`, `dist/firefox`, and zips. Commit release artifacts only when intentionally publishing a release.
 - **Tradeoffs / Risks**: Requires a repeatable packaging script and a clear release workflow.
@@ -126,7 +128,7 @@
 - **Category**: Frontend / Maintainability
 - **Severity**: Low
 - **Impact**: Improves maintainability and reduces future injection/escaping risk.
-- **Evidence**: `openSettingsPanel` starts at `tampermonkey/altyazidb-arr-bridge.user.js:1946` and assigns a large template via `backdrop.innerHTML` at `tampermonkey/altyazidb-arr-bridge.user.js:1953`.
+- **Evidence**: `openSettingsPanel` starts at `tampermonkey/altyazidb-arr-bridge.user.js:3035` and assigns a large template via `backdrop.innerHTML` at `tampermonkey/altyazidb-arr-bridge.user.js:3056`.
 - **Why it’s inefficient**: This is not a hot path, but the large string repeats structure, styling hooks, inputs, and event binding assumptions. It increases bug surface and makes incremental optimization harder.
 - **Recommended fix**: Use small DOM builder helpers or a field descriptor array for service panels. Keep escaping centralized and generate repeated Radarr/Sonarr/Prowlarr form rows from data.
 - **Tradeoffs / Risks**: More helper code, but less fragile markup editing.

@@ -68,6 +68,8 @@ Auto-add varsayılan olarak kapalıdır ve açıldığında indirme araması ba�
 - Sonarr: `searchForMissingEpisodes: false`
 - Sonarr: `searchForCutoffUnmetEpisodes: false`
 
+Auto-add yalnızca kesin eşleşmeyi ekler (TMDb/TVDb/IMDb ID eşleşmesi, ID ile yapılmış ve tek sonuç dönen arama ya da yılı da tutan aynı başlık). Kesin eşleşme yoksa hiçbir şey eklemez; Radarr/Sonarr'ın ekleme arama sayfasını açar.
+
 API anahtarları sadece yerel tarayıcı depolamasında saklanır. Radarr/Sonarr/Prowlarr anahtarları `X-Api-Key` header'ıyla, Jackett anahtarı kendi API formatına uygun `apikey` query parametresiyle yalnızca ayarladığın servise gönderilir. Reverse-proxy path prefix'leri korunur ve eklentinin açtığı servis URL'leri aynı prefix içinde kalır. Yönlendirmeler reddedilir; hata metinlerinde anahtarlar redakte edilir. Servis URL'leri kullanıcı/parola içermeyen HTTP/HTTPS adresleri veya `host:port` biçimi olmalıdır.
 
 ### API Anahtarları Nereden Alınır?
@@ -282,6 +284,8 @@ Auto-add is disabled by default and does not start an immediate download search:
 - Radarr: `searchForMovie: false`
 - Sonarr: `searchForMissingEpisodes: false`
 - Sonarr: `searchForCutoffUnmetEpisodes: false`
+
+Auto-add only adds an exact match (a TMDb/TVDb/IMDb ID match, the single result of an ID-keyed lookup, or the same title with an agreeing year). Without an exact match it adds nothing and opens the Radarr/Sonarr add search page instead.
 
 API keys are stored only in local browser storage. Radarr/Sonarr/Prowlarr keys are sent as `X-Api-Key`; Jackett uses its `apikey` query parameter. Each key is sent only to its configured service. Reverse-proxy path prefixes are preserved, and service URLs opened by the extension stay inside the configured prefix. Redirects are rejected and keys are redacted from error details. Service URLs must be credential-free HTTP/HTTPS URLs or `host:port` values.
 

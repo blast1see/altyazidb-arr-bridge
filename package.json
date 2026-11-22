@@ -6,7 +6,7 @@
     "node": ">=22.12.0"
   },
   "scripts": {
-    "test": "node --test --test-isolation=none test/config.test.js test/background-api.test.js test/content-render.test.js && node scripts/test-detail-page-gating.js && node scripts/verify-jackett-imdb.js",
+    "test": "node --test --test-isolation=none test/config.test.js test/background-api.test.js test/content-render.test.js test/options.test.js test/userscript-parity.test.js && node scripts/test-detail-page-gating.js && node scripts/verify-jackett-imdb.js",
     "lint": "node scripts/check-syntax.js",
     "lint:firefox": "web-ext lint --source-dir altyazidb-arr-bridge-firefox-0.1.1 --self-hosted",
     "package:verify": "node scripts/verify-extension-devtools.js",
