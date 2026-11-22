@@ -277,3 +277,128 @@ test("unknown routes render only when a real detail marker exists", () => {
   assert.equal(config.isLikelyDetailPage("/forum/topic.html", true), false);
   assert.equal(config.isLikelyDetailPage("/admin.php", true), false);
 });
+
+test("movie paths never yield season or episode numbers", () => {
+  for (const pathname of [
+    "/film/45-x2.html",
+    "/anime-filmleri/45-x2.html",
+    "/animasyon-filmleri/45-x2.html",
+    "/asya-filmleri/45-x2.html",
+    "/belgesel-filmleri/45-x2.html"
+  ]) {
+    assert.deepEqual(
+      config.detectSeasonEpisode(pathname, "X2"),
+      { seasonNumber: null, episodeNumber: null },
+      pathname
+    );
+  }
+
+  assert.deepEqual(
+    config.detectSeasonEpisode("/film/12-5x2.html", "5x2 - AltyaziDB"),
+    { seasonNumber: null, episodeNumber: null }
+  );
+});
+
+test("the site's numeric path id is not read as a season", () => {
+  assert.deepEqual(
+    config.detectSeasonEpisode("/dizi/45-x2.html", "X2"),
+    { seasonNumber: null, episodeNumber: null }
+  );
+  assert.deepEqual(
+    config.detectSeasonEpisode("/dizi/45-show-1x03.html", "Show"),
+    { seasonNumber: 1, episodeNumber: 3 }
+  );
+  assert.deepEqual(
+    config.detectSeasonEpisode("/dizi/45-show.html", "Show 2x05 - AltyaziDB"),
+    { seasonNumber: 2, episodeNumber: 5 }
+  );
+});
+
+test("movie search terms carry title and year, never SxxEyy", () => {
+  const movie = {
+    title: "5x2",
+    year: 2004,
+    mediaType: "movie",
+    seasonNumber: 5,
+    episodeNumber: 2
+  };
+  const seasonToken = /\bS\d\d(?:E\d\d)?\b/;
+
+  assert.deepEqual(config.prowlarrTerms(movie), ["5x2 2004"]);
+  assert.equal(config.prowlarrTerm(movie), "5x2 2004");
+  assert.deepEqual(config.jackettTerms(movie), ["5x2 2004"]);
+  assert.equal(config.jackettTerm(movie), "5x2 2004");
+
+  for (const service of ["radarr", "sonarr", "prowlarr", "jackett"]) {
+    const plan = config.buildSearchPlan(service, movie);
+    assert.doesNotMatch(plan.term, seasonToken, service);
+    assert.doesNotMatch(plan.fallbackTerm, seasonToken, service);
+  }
+
+  const seasonOnlyMovie = { ...movie, episodeNumber: null };
+  assert.deepEqual(config.prowlarrTerms(seasonOnlyMovie), ["5x2 2004"]);
+});
+
+test("series search terms keep their season and episode tokens", () => {
+  const episode = {
+    title: "The Boys",
+    year: 2019,
+    mediaType: "episode",
+    seasonNumber: 5,
+    episodeNumber: 8
+  };
+
+  assert.deepEqual(config.prowlarrTerms(episode), ["The Boys S05E08", "The Boys 2019"]);
+  assert.equal(config.jackettTerm(episode), "The Boys S05E08");
+  assert.equal(
+    config.prowlarrTerm({ ...episode, mediaType: "season", episodeNumber: null }),
+    "The Boys S05"
+  );
+});
+
+test("title years prefer a parenthesized year and never guess from title words", () => {
+  assert.equal(
+    config.yearFromSignals({ titleValues: ["2001: A Space Odyssey (1968)"] }),
+    1968
+  );
+  assert.equal(
+    config.yearFromSignals({ titleValues: ["Blade Runner 2049 Türkçe Altyazı"] }),
+    null
+  );
+  assert.equal(
+    config.yearFromSignals({ titleValues: ["Wonder Woman 1984", "Wonder Woman 1984 (2020)"] }),
+    2020
+  );
+  assert.equal(
+    config.yearFromSignals({ titleValues: ["Blade Runner 2049 (2017) - AltyaziDB"] }),
+    2017
+  );
+});
+
+test("title years in the future are rejected, trusted sources are not", () => {
+  const nextYear = new Date().getFullYear() + 1;
+  const farFuture = nextYear + 1;
+
+  assert.equal(config.yearFromSignals({ titleValues: [`Upcoming (${nextYear})`] }), nextYear);
+  assert.equal(config.yearFromSignals({ titleValues: [`Far Away (${farFuture})`] }), null);
+  assert.equal(
+    config.yearFromSignals({ detailYears: [String(farFuture)], titleValues: ["Far Away (1999)"] }),
+    farFuture
+  );
+  assert.equal(
+    config.yearFromSignals({ jsonLdYears: ["2049-01-01"], titleValues: ["Blade Runner 2049"] }),
+    2049
+  );
+});
+
+test("xfsearch listings and bare category roots are not detail pages", () => {
+  assert.equal(config.isBlockedPagePath("/xfsearch/year/2020/"), true);
+  assert.equal(config.isLikelyDetailPage("/xfsearch/year/2020/", true), false);
+
+  for (const pathname of ["/film/", "/dizi/", "/film", "/anime-dizileri/", "/film/page/2/"]) {
+    assert.equal(config.isLikelyDetailPage(pathname, true), false, pathname);
+  }
+
+  assert.equal(config.isLikelyDetailPage("/film/724-michael.html", true), true);
+  assert.equal(config.isLikelyDetailPage("/detay/mystery.html", true), true);
+});
