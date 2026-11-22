@@ -32,7 +32,15 @@ const cases = [
 
   // An unrecognized route may be a genuine detail page, but only with a strong marker.
   { expected: false, marker: false, url: "https://altyazidb.com/detay/mystery.html" },
-  { expected: true, marker: true, url: "https://altyazidb.com/detay/mystery.html" }
+  { expected: true, marker: true, url: "https://altyazidb.com/detay/mystery.html" },
+
+  // Listing pages: xfsearch filters and bare category roots carry list markup only.
+  { expected: false, marker: true, url: "https://altyazidb.com/xfsearch/year/2020/" },
+  { expected: false, marker: true, url: "https://altyazidb.com/xfsearch/tur/aksiyon/" },
+  { expected: false, marker: true, url: "https://altyazidb.com/film/" },
+  { expected: false, marker: true, url: "https://altyazidb.com/dizi/" },
+  { expected: false, marker: true, url: "https://altyazidb.com/film/page/2/" },
+  { expected: false, marker: true, url: "https://altyazidb.com/belgesel-dizileri/" }
 ];
 
 let pass = 0;

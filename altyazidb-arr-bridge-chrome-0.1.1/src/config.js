@@ -40,8 +40,32 @@
   const REQUEST_TIMEOUT_MS = 10000;
   const SEARCH_TIMEOUT_MS = 30000;
 
-  const SUBTITLE_PATH_RE = /^\/(?:film|dizi|anime-filmleri|anime-dizileri|animasyon-filmleri|animasyon-dizileri|asya-filmleri|asya-dizileri|belgesel-filmleri|belgesel-dizileri|tv-programlari)\//i;
-  const NON_SUBTITLE_PATH_RE = /^\/(?:forum|user|uploads|engine|index(?:\.php|\.html)?|search|page|lastnews|allnews|tags|stats|statistics|(?:register|login|lostpassword|autobackup)(?:\.php|\.html)?|admin(?:\.php)?)(?:\/|$|\?)/i;
+  // AltyaziDB's top-level media categories; the path regexes below derive
+  // from these lists so a new category only needs to be added once.
+  const MOVIE_CATEGORIES = [
+    "film",
+    "anime-filmleri",
+    "animasyon-filmleri",
+    "asya-filmleri",
+    "belgesel-filmleri"
+  ];
+  const SERIES_CATEGORIES = [
+    "dizi",
+    "anime-dizileri",
+    "animasyon-dizileri",
+    "asya-dizileri",
+    "belgesel-dizileri",
+    "tv-programlari"
+  ];
+  const MEDIA_CATEGORY_GROUP = `(?:${[...MOVIE_CATEGORIES, ...SERIES_CATEGORIES].join("|")})`;
+  const NON_SUBTITLE_PATH_RE = /^\/(?:forum|user|uploads|engine|index(?:\.php|\.html)?|search|xfsearch|page|lastnews|allnews|tags|stats|statistics|(?:register|login|lostpassword|autobackup)(?:\.php|\.html)?|admin(?:\.php)?)(?:\/|$|\?)/i;
+  // A category root (optionally paginated) lists many titles, so a detail
+  // marker in its cards must not turn it into a detail page.
+  const SUBTITLE_LIST_PATH_RE = new RegExp(
+    `^\\/${MEDIA_CATEGORY_GROUP}\\/?(?:page\\/\\d+\\/?)?$`,
+    "i"
+  );
+  const MOVIE_PATH_RE = new RegExp(`^\\/(?:${MOVIE_CATEGORIES.join("|")})\\/`, "i");
 
   function stripArrSuffix(title) {
     return String(title || "")
@@ -300,8 +324,36 @@
     return null;
   }
 
+  // Page titles are weak year evidence: "Blade Runner 2049" or "Wonder Woman
+  // 1984" contain a year-shaped number that is part of the name, and a bare
+  // number cannot be told apart from a release year. Only a parenthesized year
+  // ("2001: A Space Odyssey (1968)") is accepted, the last one in a value wins
+  // because sites append it, and years past next year are rejected. Missing a
+  // year only drops a search refinement; a wrong year makes every search miss.
+  function titleYear(values) {
+    const latestYear = new Date().getFullYear() + 1;
+
+    for (const value of values || []) {
+      const matches = [
+        ...String(value || "").matchAll(
+          /\(\s*((?:18|19|20|21)\d{2})\s*(?:[-–]\s*(?:(?:18|19|20|21)\d{2})?\s*)?\)/g
+        )
+      ];
+
+      for (const match of matches.reverse()) {
+        const year = Number(match[1]);
+
+        if (year <= latestYear) {
+          return year;
+        }
+      }
+    }
+
+    return null;
+  }
+
   function yearFromSignals({ detailYears = [], jsonLdYears = [], titleValues = [] } = {}) {
-    return firstYear(detailYears) || firstYear(jsonLdYears) || firstYear(titleValues);
+    return firstYear(detailYears) || firstYear(jsonLdYears) || titleYear(titleValues);
   }
 
   function extractExternalIds(hrefs = []) {
@@ -367,14 +419,11 @@
   function isLikelyDetailPage(pathname, hasDetailMarker) {
     const path = String(pathname || "/");
 
-    if (isBlockedPagePath(path)) {
+    if (isBlockedPagePath(path) || SUBTITLE_LIST_PATH_RE.test(path)) {
       return false;
     }
 
-    if (SUBTITLE_PATH_RE.test(path)) {
-      return Boolean(hasDetailMarker);
-    }
-
+    // Known media routes and unrecognized routes alike need a real marker.
     return Boolean(hasDetailMarker);
   }
 
@@ -386,6 +435,15 @@
     } catch (_error) {
       // Keep the original path when it contains malformed escape sequences.
     }
+
+    // Movies have no seasons: a title such as "5x2" or "X2" is a name.
+    if (MOVIE_PATH_RE.test(decodedPath)) {
+      return { seasonNumber: null, episodeNumber: null };
+    }
+
+    // The site prefixes the slug with its numeric id ("/dizi/45-x2.html");
+    // drop it so "45-x2" is not read as season 45, episode 2.
+    decodedPath = decodedPath.replace(/(^|\/)\d+-(?=[^/]*$)/, "$1");
 
     const signal = normalizeSpace(
       `${decodedPath.replace(/[\/_.-]+/g, " ")} ${pageTitle || ""}`
@@ -597,13 +655,16 @@
       return "";
     }
 
-    if (media?.seasonNumber && media?.episodeNumber) {
+    // A movie never gets SxxEyy, even if a stale season number reached it.
+    const episodic = media?.mediaType !== "movie";
+
+    if (episodic && media?.seasonNumber && media?.episodeNumber) {
       return normalizeSpace(
         `${normalizedTitle} S${padNumber(media.seasonNumber)}E${padNumber(media.episodeNumber)}`
       );
     }
 
-    if (media?.seasonNumber) {
+    if (episodic && media?.seasonNumber) {
       return normalizeSpace(`${normalizedTitle} S${padNumber(media.seasonNumber)}`);
     }
 
