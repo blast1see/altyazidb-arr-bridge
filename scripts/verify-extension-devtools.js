@@ -178,5 +178,33 @@ check(userscript.includes('redirect: "error"'), "Tampermonkey redirect rejection
 check(!/value="\$\{escapeAttr\(settings\.\w+ApiKey\)\}"/.test(userscript), "Tampermonkey renders a saved API key into HTML");
 check((userscript.match(/Delete saved API key/g) || []).length === 4, "Tampermonkey explicit API-key deletion controls missing");
 check(packageScript.includes("package.json") && packageScript.includes("$package.version"), "Package script must read the release version from package.json");
+check(
+  userscript.includes("function findExactMatch(") &&
+    userscript.includes("const exact = findExactMatch(service, media, results, searchPlan);") &&
+    userscript.includes("No exact match; opened ${serviceLabel(service)} add search instead of auto-adding."),
+  "Tampermonkey auto-add must post only an exact match and otherwise open the add search"
+);
+check(
+  userscript.includes("|search|xfsearch|page|") && userscript.includes("SUBTITLE_LIST_PATH_RE.test(path)"),
+  "Tampermonkey page gate must skip xfsearch and category list pages"
+);
+check(
+  userscript.includes("MOVIE_PATH_RE.test(decodedPath)") && userscript.includes("|| titleYear(titleValues)"),
+  "Tampermonkey must not derive seasons on movie paths or guess years from title words"
+);
+check(
+  userscript.includes('typeof GM_info === "undefined" &&') &&
+    userscript.includes("globalThis.__ADB_ARR_TEST_HOOK__("),
+  "Tampermonkey test hook must stay gated off when GM_info exists"
+);
+check(
+  /[^\x00-\x7f]/.test(userscript) === false,
+  "Tampermonkey source must stay ASCII (use \\u escapes)"
+);
+const testScript = readJson(path.join(root, "package.json")).scripts.test;
+check(
+  testScript.includes("test/options.test.js") && testScript.includes("test/userscript-parity.test.js"),
+  "npm test must run the options and userscript parity tests"
+);
 
 console.log(`Package verification OK (${checks} checks).`);

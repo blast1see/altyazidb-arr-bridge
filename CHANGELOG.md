@@ -7,6 +7,21 @@ Security:
 - Updated `web-ext` to 10.7.0 and the scoped `adm-zip` (0.6.1) and `brace-expansion` (1.1.21) overrides, and refreshed the lockfile, which also moves `undici`, `fast-uri`, `js-yaml` and `source-map-js` to patched versions. All are development dependencies of `web-ext`; the extension and the userscript are unchanged.
 - The CI audit step is now `scripts/audit-check.js`: it still fails on every high or critical advisory, but accepts the ones listed in it with a reason. One is listed: `node-forge` (GHSA-86w9-cpqp-85rv) has no fixed release, and is reached only through `web-ext`'s Firefox for Android runner, which `web-ext lint` never loads. The script says when a listed advisory is no longer reported, so the exception does not outlive the problem.
 
+Fixes:
+
+- Movie pages no longer get a fake season/episode: a title such as `5x2` or `X2` on a movie path, or the site's numeric slug id (`/dizi/45-x2.html`), was read as `S45E02`, and Prowlarr/Jackett terms for movies carried that `SxxEyy` token. Movie search terms now always use title and year.
+- The page title no longer supplies a wrong year: the first four-digit number was taken (`Blade Runner 2049`). Only a parenthesized year that is not in the future is used now (`2001: A Space Odyssey (1968)`); detail-row and JSON-LD years keep priority.
+- `/xfsearch/...` listings and bare or paginated category roots (`/film/`, `/dizi/page/2/`) are no longer treated as detail pages, so buttons are not mounted on list pages.
+- Behavior change: auto-add now posts only an exact match (a strong TMDb/TVDb/IMDb ID match, the single result of an ID-keyed lookup, or an equal normalized title whose year agrees). Previously it fell back to the first lookup result and could add an unrelated title. Without an exact match nothing is added and the Radarr/Sonarr add search page opens with the message "No exact match; opened ... add search instead of auto-adding."
+- Opening a result no longer fails as a whole when a step breaks: an unreachable existing-item check falls back to the add page, an invalid service URL is reported without opening a tab, a tab that cannot be opened after a successful add keeps the add reported as done, and open-URL/open-result errors are returned as redacted responses instead of rejections.
+- Callback-style `chrome.*` storage, tabs, and permissions calls in the background, content script, and options page now check `runtime.lastError`, so a failed call rejects with its message instead of resolving as if it had succeeded.
+- Button toggles changed in the options page now update AltyaziDB tabs that are already open (`storage.onChanged`), without a reload; a plain save that changes nothing does not rebuild the row.
+
+Improvements:
+
+- The Tampermonkey userscript carries the same season/episode, year, page-gate, movie-term, and auto-add exact-match fixes as the extension.
+- Added options-page tests (`test/options.test.js`) and a userscript parity test (`test/userscript-parity.test.js`) that runs the userscript's pure functions against the extension's on shared vectors, including the end-to-end auto-add response; both run in `npm test`. The userscript hands its functions to the test through a hook that is only called when `GM_info` is absent, which never happens in a userscript manager.
+
 ## 0.1.6 - 2026-08-02
 
 Security:

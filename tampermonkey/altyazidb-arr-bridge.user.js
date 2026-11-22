@@ -61,8 +61,32 @@
     ".comment",
     "[class*='comment']"
   ].join(", ");
-  const SUBTITLE_PATH_RE = /^\/(?:film|dizi|anime-filmleri|anime-dizileri|animasyon-filmleri|animasyon-dizileri|asya-filmleri|asya-dizileri|belgesel-filmleri|belgesel-dizileri|tv-programlari)\//i;
-  const NON_SUBTITLE_PATH_RE = /^\/(?:forum|user|uploads|engine|index(?:\.php|\.html)?|search|page|lastnews|allnews|tags|stats|statistics|(?:register|login|lostpassword|autobackup)(?:\.php|\.html)?|admin(?:\.php)?)(?:\/|$|\?)/i;
+  // AltyaziDB's top-level media categories; the path regexes below derive
+  // from these lists so a new category only needs to be added once.
+  const MOVIE_CATEGORIES = [
+    "film",
+    "anime-filmleri",
+    "animasyon-filmleri",
+    "asya-filmleri",
+    "belgesel-filmleri"
+  ];
+  const SERIES_CATEGORIES = [
+    "dizi",
+    "anime-dizileri",
+    "animasyon-dizileri",
+    "asya-dizileri",
+    "belgesel-dizileri",
+    "tv-programlari"
+  ];
+  const MEDIA_CATEGORY_GROUP = `(?:${[...MOVIE_CATEGORIES, ...SERIES_CATEGORIES].join("|")})`;
+  const NON_SUBTITLE_PATH_RE = /^\/(?:forum|user|uploads|engine|index(?:\.php|\.html)?|search|xfsearch|page|lastnews|allnews|tags|stats|statistics|(?:register|login|lostpassword|autobackup)(?:\.php|\.html)?|admin(?:\.php)?)(?:\/|$|\?)/i;
+  // A category root (optionally paginated) lists many titles, so a detail
+  // marker in its cards must not turn it into a detail page.
+  const SUBTITLE_LIST_PATH_RE = new RegExp(
+    `^\\/${MEDIA_CATEGORY_GROUP}\\/?(?:page\\/\\d+\\/?)?$`,
+    "i"
+  );
+  const MOVIE_PATH_RE = new RegExp(`^\\/(?:${MOVIE_CATEGORIES.join("|")})\\/`, "i");
 
   const DEFAULT_SETTINGS = {
     radarrBaseUrl: "http://127.0.0.1:7878",
@@ -651,11 +675,14 @@
       return "";
     }
 
-    if (media?.seasonNumber && media?.episodeNumber) {
+    // A movie never gets SxxEyy, even if a stale season number reached it.
+    const episodic = media?.mediaType !== "movie";
+
+    if (episodic && media?.seasonNumber && media?.episodeNumber) {
       return normalizeSpace(`${normalizedTitle} S${padNumber(media.seasonNumber)}E${padNumber(media.episodeNumber)}`);
     }
 
-    if (media?.seasonNumber) {
+    if (episodic && media?.seasonNumber) {
       return normalizeSpace(`${normalizedTitle} S${padNumber(media.seasonNumber)}`);
     }
 
@@ -1027,6 +1054,102 @@
     }) || results[0];
   }
 
+  // Turkish dotless/dotted i do not decompose under NFKD, so fold them first;
+  // then drop diacritics and treat any punctuation run as a single space.
+  function matchComparableTitle(value) {
+    return normalizeSpace(value)
+      .replace(/[\u0131\u0130]/g, "i")
+      .toLowerCase()
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^\p{L}\p{N}]+/gu, " ")
+      .trim();
+  }
+
+  function knownYear(value) {
+    const year = Number.parseInt(value, 10);
+    return year >= 1800 && year <= 3000 ? year : 0;
+  }
+
+  function matchComparableTitles(values, year = 0) {
+    const titles = new Set();
+
+    for (const value of values) {
+      const title = matchComparableTitle(value);
+
+      if (title) {
+        titles.add(title);
+      }
+
+      // Arr lookups disambiguate remakes as "Title (2005)"; compare without it.
+      const withoutYear = year
+        ? matchComparableTitle(String(value || "").replace(new RegExp(`\\s*\\(${year}\\)\\s*$`), ""))
+        : "";
+
+      if (withoutYear) {
+        titles.add(withoutYear);
+      }
+    }
+
+    return titles;
+  }
+
+  function hasStrongIdMatch(service, media, result) {
+    if (service === "radarr") {
+      const tmdbId = Number(media?.tmdbId || 0);
+
+      if (tmdbId && media?.tmdbType !== "tv" && Number(result?.tmdbId) === tmdbId) {
+        return true;
+      }
+    }
+
+    if (service === "sonarr") {
+      const tvdbId = Number(media?.tvdbId || 0);
+
+      if (tvdbId && Number(result?.tvdbId) === tvdbId) {
+        return true;
+      }
+    }
+
+    const imdbId = String(media?.imdbId || "").toLowerCase();
+    return Boolean(imdbId) && String(result?.imdbId || "").toLowerCase() === imdbId;
+  }
+
+  const ID_SEARCH_KINDS = new Set(["tmdb", "imdb", "tvdb"]);
+
+  // Auto-add only accepts a result that is certainly the page's title: a strong
+  // ID match, the single answer of a lookup that was already keyed by ID, or an
+  // equal normalized title whose year agrees whenever both years are known.
+  function findExactMatch(service, media, results, searchPlan) {
+    const byId = results.find((result) => hasStrongIdMatch(service, media, result));
+
+    if (byId) {
+      return byId;
+    }
+
+    if (ID_SEARCH_KINDS.has(searchPlan?.kind) && results.length === 1) {
+      return results[0];
+    }
+
+    const mediaYear = knownYear(media?.year);
+    const mediaTitles = matchComparableTitles([media?.originalTitle, media?.title, media?.searchTitle]);
+
+    if (!mediaTitles.size) {
+      return null;
+    }
+
+    return results.find((result) => {
+      const resultYear = knownYear(result?.year);
+
+      if (mediaYear && resultYear && mediaYear !== resultYear) {
+        return false;
+      }
+
+      const resultTitles = matchComparableTitles([result?.title, result?.originalTitle], resultYear);
+      return [...resultTitles].some((title) => mediaTitles.has(title));
+    }) || null;
+  }
+
   function resultSearchTerm(service, result, fallbackTerm) {
     if (service === "radarr") {
       if (result?.tmdbId) {
@@ -1191,7 +1314,22 @@
     }
 
     if (settings.behavior === "autoAdd") {
-      return addResult(service, media, best, settings, fallbackUrl, checkedExistingIdentity);
+      const exact = findExactMatch(service, media, results, searchPlan);
+
+      if (!exact) {
+        const searchUrl = buildAddPageUrl(baseUrl, searchPlan.fallbackTerm || searchPlan.term);
+        openUrl(searchUrl);
+
+        return {
+          ok: true,
+          service,
+          opened: true,
+          openedUrl: searchUrl,
+          message: `No exact match; opened ${serviceLabel(service)} add search instead of auto-adding.`
+        };
+      }
+
+      return addResult(service, media, exact, settings, fallbackUrl, checkedExistingIdentity);
     }
 
     const existing = checkedExistingIdentity === existingIdentity(service, best)
@@ -1773,21 +1911,57 @@
 
   function firstYear(values) {
     for (const value of values || []) {
-      const match = String(value || "").match(/\b(19|20)\d{2}\b/);
+      const match = String(value || "").match(/\b(?:18|19|20|21)\d{2}\b/);
       if (match) return Number(match[0]);
     }
     return null;
   }
 
+  // Page titles are weak year evidence: "Blade Runner 2049" or "Wonder Woman
+  // 1984" contain a year-shaped number that is part of the name. Only a
+  // parenthesized year ("2001: A Space Odyssey (1968)") is accepted, the last
+  // one in a value wins because sites append it, and years past next year are
+  // rejected. Missing a year only drops a search refinement; a wrong year makes
+  // every search miss.
+  function titleYear(values) {
+    const latestYear = new Date().getFullYear() + 1;
+
+    for (const value of values || []) {
+      const matches = [
+        ...String(value || "").matchAll(
+          /\(\s*((?:18|19|20|21)\d{2})\s*(?:[-\u2013]\s*(?:(?:18|19|20|21)\d{2})?\s*)?\)/g
+        )
+      ];
+
+      for (const match of matches.reverse()) {
+        const year = Number(match[1]);
+
+        if (year <= latestYear) {
+          return year;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  function yearFromSignals({ detailYears = [], jsonLdYears = [], titleValues = [] } = {}) {
+    return firstYear(detailYears) || firstYear(jsonLdYears) || titleYear(titleValues);
+  }
+
   function findYear(snapshot, signals) {
-    return firstYear([
-      ...(snapshot?.detailYears || []),
-      labelValue(/^(?:y\u0131l|yap\u0131m y\u0131l\u0131|year)$/i)
-    ]) || firstYear(signals?.mediaYears || []) || firstYear([
-      meta('meta[property="og:title"]'),
-      meta('meta[property="twitter:title"]'),
-      document.title
-    ]);
+    return yearFromSignals({
+      detailYears: [
+        ...(snapshot?.detailYears || []),
+        labelValue(/^(?:y\u0131l|yap\u0131m y\u0131l\u0131|year)$/i)
+      ],
+      jsonLdYears: signals?.mediaYears || [],
+      titleValues: [
+        meta('meta[property="og:title"]'),
+        meta('meta[property="twitter:title"]'),
+        document.title
+      ]
+    });
   }
 
   function extractIdsFromLinks(snapshot, signals) {
@@ -1847,14 +2021,23 @@
     return ids;
   }
 
-  function detectSeasonEpisode(rawTitle) {
-    let decodedPath = window.location.pathname;
+  function detectSeasonEpisode(pathname, rawTitle) {
+    let decodedPath = String(pathname || "");
 
     try {
       decodedPath = decodeURIComponent(decodedPath);
     } catch (_error) {
       // Keep the original path when it contains malformed escape sequences.
     }
+
+    // Movies have no seasons: a title such as "5x2" or "X2" is a name.
+    if (MOVIE_PATH_RE.test(decodedPath)) {
+      return { seasonNumber: null, episodeNumber: null };
+    }
+
+    // The site prefixes the slug with its numeric id ("/dizi/45-x2.html");
+    // drop it so "45-x2" is not read as season 45, episode 2.
+    decodedPath = decodedPath.replace(/(^|\/)\d+-(?=[^/]*$)/, "$1");
 
     const pageSignal = normalizeSpace(
       `${decodedPath.replace(/[\/_.-]+/g, " ")} ${rawTitle || ""}`
@@ -1885,10 +2068,17 @@
     };
   }
 
-  function detectType(signals, ids, seasonEpisode) {
-    const path = window.location.pathname.toLowerCase();
-    const breadcrumbs = [...signals.breadcrumbNames, ...signals.breadcrumbUrls].join(" ").toLowerCase();
-    const schemaTypes = signals.schemaTypes.join(" ").toLowerCase();
+  function detectMediaType({
+    pathname = "",
+    breadcrumbs: breadcrumbText = "",
+    schemaTypes: schemaText = "",
+    tmdbType = "",
+    seasonNumber = null,
+    episodeNumber = null
+  } = {}) {
+    const path = String(pathname || "").toLowerCase();
+    const breadcrumbs = String(breadcrumbText || "").toLowerCase();
+    const schemaTypes = String(schemaText || "").toLowerCase();
 
     if (/\/(?:film|anime-filmleri|animasyon-filmleri|asya-filmleri|belgesel-filmleri)\//.test(path)) {
       return "movie";
@@ -1899,38 +2089,38 @@
     }
 
     if (/\/(?:dizi|animasyon-dizileri|asya-dizileri|belgesel-dizileri|tv-programlari)\//.test(path)) {
-      if (seasonEpisode.episodeNumber) {
+      if (episodeNumber) {
         return "episode";
       }
 
-      if (seasonEpisode.seasonNumber) {
+      if (seasonNumber) {
         return "season";
       }
 
       return "series";
     }
 
-    if (/\bfilm\b|movie/.test(breadcrumbs) || /\bmovie\b/.test(schemaTypes) || ids.tmdbType === "movie") {
+    if (/\bfilm\b|movie/.test(breadcrumbs) || /\bmovie\b/.test(schemaTypes) || tmdbType === "movie") {
       return "movie";
     }
 
-    if (/\bdizi\b|\bseries\b|\btv\b/.test(breadcrumbs) || /tvseries/.test(schemaTypes) || ids.tmdbType === "tv") {
-      if (seasonEpisode.episodeNumber) {
+    if (/\bdizi\b|\bseries\b|\btv\b/.test(breadcrumbs) || /tvseries/.test(schemaTypes) || tmdbType === "tv") {
+      if (episodeNumber) {
         return "episode";
       }
 
-      if (seasonEpisode.seasonNumber) {
+      if (seasonNumber) {
         return "season";
       }
 
       return "series";
     }
 
-    if (seasonEpisode.episodeNumber) {
+    if (episodeNumber) {
       return "episode";
     }
 
-    if (seasonEpisode.seasonNumber) {
+    if (seasonNumber) {
       return "season";
     }
 
@@ -1981,11 +2171,18 @@
       meta('meta[property="og:title"]') ||
       meta('meta[property="twitter:title"]') ||
       document.title;
-    const seasonEpisode = detectSeasonEpisode(rawTitle);
+    const seasonEpisode = detectSeasonEpisode(window.location.pathname, rawTitle);
     const title = stripSiteTitle(rawTitle);
     const originalTitle = labelValue(/orijinal ba\u015fl\u0131k|original title|original name/i) || title;
     const year = findYear(snapshot, signals);
-    const mediaType = detectType(signals, ids, seasonEpisode);
+    const mediaType = detectMediaType({
+      pathname: window.location.pathname,
+      breadcrumbs: [...signals.breadcrumbNames, ...signals.breadcrumbUrls].join(" "),
+      schemaTypes: signals.schemaTypes.join(" "),
+      tmdbType: ids.tmdbType,
+      seasonNumber: seasonEpisode.seasonNumber,
+      episodeNumber: seasonEpisode.episodeNumber
+    });
     const releaseTitles = extractReleaseTitles(year);
 
     return {
@@ -2034,15 +2231,15 @@
     return path === "/" || NON_SUBTITLE_PATH_RE.test(path);
   }
 
-  function isLikelyDetailPage() {
-    const path = window.location.pathname || "/";
+  function isLikelyDetailPage(pathname, hasDetailMarker) {
+    const path = String(pathname || "/");
 
-    if (isBlockedPagePath(path)) {
+    if (isBlockedPagePath(path) || SUBTITLE_LIST_PATH_RE.test(path)) {
       return false;
     }
 
-    const hasDetailMarker = Boolean(document.querySelector(DETAIL_SELECTOR));
-    return SUBTITLE_PATH_RE.test(path) ? hasDetailMarker : hasDetailMarker;
+    // Known media routes and unrecognized routes alike need a real marker.
+    return Boolean(hasDetailMarker);
   }
 
   function mountPoint() {
@@ -2702,7 +2899,7 @@
     existingShell?.remove();
     injectStyles();
 
-    if (!isLikelyDetailPage()) {
+    if (!isLikelyDetailPage(window.location.pathname, Boolean(document.querySelector(DETAIL_SELECTOR)))) {
       return false;
     }
 
@@ -3204,6 +3401,48 @@
     }
 
     tryRender();
+  }
+
+  // Test-only seam for test/userscript-parity.test.js. It is dead in every
+  // real userscript manager: they all define GM_info, and the hook is only
+  // called when GM_info is absent (a bare Node vm). The payload holds code
+  // only, never settings, stored values, or API keys; lookupArr receives its
+  // settings from the caller. Page scripts cannot reach this sandbox anyway.
+  if (
+    typeof GM_info === "undefined" &&
+    typeof globalThis.__ADB_ARR_TEST_HOOK__ === "function"
+  ) {
+    globalThis.__ADB_ARR_TEST_HOOK__(Object.freeze({
+      normalizeSpace,
+      normalizeBaseUrl,
+      safeHttpUrl,
+      mergeSettings,
+      cleanReleaseSearchTitle,
+      uniqueSearchTitles,
+      yearFromSignals,
+      isBlockedPagePath,
+      isLikelyDetailPage,
+      detectSeasonEpisode,
+      detectMediaType,
+      getSearchTitle,
+      titleYearTerm,
+      prowlarrTerms,
+      prowlarrTerm,
+      jackettTerms,
+      jackettTerm,
+      buildSearchPlan,
+      buildAddPageUrl,
+      buildProwlarrSearchPageUrl,
+      buildJackettSearchPageUrl,
+      buildDetailPageUrl,
+      chooseBestResult,
+      findExactMatch,
+      resultSearchTerm,
+      summarizeResult,
+      summarizeRelease,
+      summarizeJackettRelease,
+      lookupArr
+    }));
   }
 
   if (document.readyState === "loading") {
