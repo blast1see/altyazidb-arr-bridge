@@ -12,14 +12,30 @@
     return typeof globalThis.browser !== "undefined" && !!globalThis.browser.runtime;
   }
 
+  // Chrome's callback APIs report failures only through runtime.lastError,
+  // which is readable inside the callback alone. Without this check a failed
+  // storage write or permission call resolved as if it had succeeded.
+  function callbackPromise(invoke) {
+    return new Promise((resolve, reject) => {
+      invoke((value) => {
+        const error = extensionApi.runtime?.lastError;
+
+        if (error) {
+          reject(new Error(error.message || "Extension API call failed"));
+          return;
+        }
+
+        resolve(value);
+      });
+    });
+  }
+
   function storageGet(defaults = CFG.DEFAULT_SETTINGS) {
     if (usingPromiseBrowserApi()) {
       return storageApi.local.get(defaults);
     }
 
-    return new Promise((resolve) => {
-      storageApi.local.get(defaults, resolve);
-    });
+    return callbackPromise((done) => storageApi.local.get(defaults, done));
   }
 
   function storageSet(values) {
@@ -27,9 +43,7 @@
       return storageApi.local.set(values);
     }
 
-    return new Promise((resolve) => {
-      storageApi.local.set(values, resolve);
-    });
+    return callbackPromise((done) => storageApi.local.set(values, done));
   }
 
   function sendMessage(message) {
@@ -37,18 +51,7 @@
       return extensionApi.runtime.sendMessage(message);
     }
 
-    return new Promise((resolve, reject) => {
-      extensionApi.runtime.sendMessage(message, (response) => {
-        const error = extensionApi.runtime.lastError;
-
-        if (error) {
-          reject(new Error(error.message));
-          return;
-        }
-
-        resolve(response);
-      });
-    });
+    return callbackPromise((done) => extensionApi.runtime.sendMessage(message, done));
   }
 
   function setStatus(message, tone = "") {
@@ -219,9 +222,7 @@
       return permissionsApi.contains({ origins });
     }
 
-    return new Promise((resolve) => {
-      permissionsApi.contains({ origins }, (allowed) => resolve(Boolean(allowed)));
-    });
+    return callbackPromise((done) => permissionsApi.contains({ origins }, done)).then(Boolean);
   }
 
   function permissionRequest(origins) {
@@ -233,9 +234,7 @@
       return permissionsApi.request({ origins });
     }
 
-    return new Promise((resolve) => {
-      permissionsApi.request({ origins }, (granted) => resolve(Boolean(granted)));
-    });
+    return callbackPromise((done) => permissionsApi.request({ origins }, done)).then(Boolean);
   }
 
   async function requestHostPermissions(settings) {
