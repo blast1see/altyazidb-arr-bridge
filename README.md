@@ -157,10 +157,10 @@ PowerShell ile:
 
 Bu komut şunları üretir:
 
-- `altyazidb-arr-bridge-chrome-0.1.6.zip`
-- `altyazidb-arr-bridge-firefox-0.1.6.zip`
-- `altyazidb-arr-bridge-firefox-0.1.6.xpi`
-- `release/altyazidb-arr-bridge-complete-0.1.6.zip`
+- `altyazidb-arr-bridge-chrome-0.1.7.zip`
+- `altyazidb-arr-bridge-firefox-0.1.7.zip`
+- `altyazidb-arr-bridge-firefox-0.1.7.xpi`
+- `release/altyazidb-arr-bridge-complete-0.1.7.zip`
 
 ### Sorun Giderme
 
@@ -374,10 +374,10 @@ Run from PowerShell:
 
 This creates:
 
-- `altyazidb-arr-bridge-chrome-0.1.6.zip`
-- `altyazidb-arr-bridge-firefox-0.1.6.zip`
-- `altyazidb-arr-bridge-firefox-0.1.6.xpi`
-- `release/altyazidb-arr-bridge-complete-0.1.6.zip`
+- `altyazidb-arr-bridge-chrome-0.1.7.zip`
+- `altyazidb-arr-bridge-firefox-0.1.7.zip`
+- `altyazidb-arr-bridge-firefox-0.1.7.xpi`
+- `release/altyazidb-arr-bridge-complete-0.1.7.zip`
 
 ### Troubleshooting
 
