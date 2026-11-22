@@ -21,14 +21,29 @@ function usingPromiseBrowserApi() {
   return typeof globalThis.browser !== "undefined" && !!globalThis.browser.runtime;
 }
 
+// Callback-style chrome.* APIs report failures through runtime.lastError
+// instead of throwing, so it must be checked inside every callback.
+function callbackPromise(invoke) {
+  return new Promise((resolve, reject) => {
+    invoke((value) => {
+      const lastError = runtimeApi?.lastError;
+
+      if (lastError) {
+        reject(new Error(lastError.message || "Browser API call failed"));
+        return;
+      }
+
+      resolve(value);
+    });
+  });
+}
+
 function storageGet(defaults = CFG.DEFAULT_SETTINGS) {
   if (usingPromiseBrowserApi()) {
     return storageApi.local.get(defaults);
   }
 
-  return new Promise((resolve) => {
-    storageApi.local.get(defaults, resolve);
-  });
+  return callbackPromise((done) => storageApi.local.get(defaults, done));
 }
 
 function storageSet(values) {
@@ -36,9 +51,7 @@ function storageSet(values) {
     return storageApi.local.set(values);
   }
 
-  return new Promise((resolve) => {
-    storageApi.local.set(values, resolve);
-  });
+  return callbackPromise((done) => storageApi.local.set(values, done));
 }
 
 async function getSettings() {
@@ -52,12 +65,15 @@ function createTab(url) {
     return Promise.reject(new ArrBridgeError("invalidUrl", "Refused to open an unsafe URL"));
   }
 
-  if (usingPromiseBrowserApi()) {
-    return tabsApi.create({ url: safeUrl });
-  }
+  const opening = usingPromiseBrowserApi()
+    ? Promise.resolve().then(() => tabsApi.create({ url: safeUrl }))
+    : callbackPromise((done) => tabsApi.create({ url: safeUrl }, done));
 
-  return new Promise((resolve) => {
-    tabsApi.create({ url: safeUrl }, resolve);
+  return opening.catch((error) => {
+    throw new ArrBridgeError(
+      "tab",
+      `Could not open a browser tab: ${error?.message || "unknown error"}`
+    );
   });
 }
 
@@ -86,9 +102,8 @@ function permissionContains(origins) {
     return permissionsApi.contains({ origins });
   }
 
-  return new Promise((resolve) => {
-    permissionsApi.contains({ origins }, (allowed) => resolve(Boolean(allowed)));
-  });
+  return callbackPromise((done) => permissionsApi.contains({ origins }, done))
+    .then((allowed) => Boolean(allowed));
 }
 
 function fetchFailureMessage(service, baseUrl, err) {
@@ -337,6 +352,102 @@ function chooseBestResult(service, media, results) {
   return byTitle || results[0];
 }
 
+// Turkish dotless/dotted i do not decompose under NFKD, so fold them first;
+// then drop diacritics and treat any punctuation run as a single space.
+function comparableTitle(value) {
+  return CFG.normalizeSpace(value)
+    .replace(/[\u0131\u0130]/g, "i")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+}
+
+function knownYear(value) {
+  const year = Number.parseInt(value, 10);
+  return year >= 1800 && year <= 3000 ? year : 0;
+}
+
+function comparableTitles(values, year = 0) {
+  const titles = new Set();
+
+  for (const value of values) {
+    const title = comparableTitle(value);
+
+    if (title) {
+      titles.add(title);
+    }
+
+    // Arr lookups disambiguate remakes as "Title (2005)"; compare without it.
+    const withoutYear = year
+      ? comparableTitle(String(value || "").replace(new RegExp(`\\s*\\(${year}\\)\\s*$`), ""))
+      : "";
+
+    if (withoutYear) {
+      titles.add(withoutYear);
+    }
+  }
+
+  return titles;
+}
+
+function hasStrongIdMatch(service, media, result) {
+  if (service === "radarr") {
+    const tmdbId = Number(media?.tmdbId || 0);
+
+    if (tmdbId && media?.tmdbType !== "tv" && Number(result?.tmdbId) === tmdbId) {
+      return true;
+    }
+  }
+
+  if (service === "sonarr") {
+    const tvdbId = Number(media?.tvdbId || 0);
+
+    if (tvdbId && Number(result?.tvdbId) === tvdbId) {
+      return true;
+    }
+  }
+
+  const imdbId = String(media?.imdbId || "").toLowerCase();
+  return Boolean(imdbId) && String(result?.imdbId || "").toLowerCase() === imdbId;
+}
+
+const ID_SEARCH_KINDS = new Set(["tmdb", "imdb", "tvdb"]);
+
+// Auto-add only accepts a result that is certainly the page's title: a strong
+// ID match, the single answer of a lookup that was already keyed by ID, or an
+// equal normalized title whose year agrees whenever both years are known.
+function findExactMatch(service, media, results, searchPlan) {
+  const byId = results.find((result) => hasStrongIdMatch(service, media, result));
+
+  if (byId) {
+    return byId;
+  }
+
+  if (ID_SEARCH_KINDS.has(searchPlan?.kind) && results.length === 1) {
+    return results[0];
+  }
+
+  const mediaYear = knownYear(media?.year);
+  const mediaTitles = comparableTitles([media?.originalTitle, media?.title, media?.searchTitle]);
+
+  if (!mediaTitles.size) {
+    return null;
+  }
+
+  return results.find((result) => {
+    const resultYear = knownYear(result?.year);
+
+    if (mediaYear && resultYear && mediaYear !== resultYear) {
+      return false;
+    }
+
+    const resultTitles = comparableTitles([result?.title, result?.originalTitle], resultYear);
+    return [...resultTitles].some((title) => mediaTitles.has(title));
+  }) || null;
+}
+
 function resultSearchTerm(service, result, fallbackTerm) {
   if (service === "radarr") {
     if (result?.tmdbId) {
@@ -476,10 +587,29 @@ async function lookupArr(service, media, settings) {
   }
 
   if (settings.behavior === "autoAdd") {
+    const exact = findExactMatch(service, media, results, searchPlan);
+
+    if (!exact) {
+      const searchUrl = CFG.buildAddPageUrl(
+        baseUrl,
+        searchPlan.fallbackTerm || searchPlan.term
+      );
+
+      await createTab(searchUrl);
+
+      return {
+        ok: true,
+        service,
+        opened: true,
+        openedUrl: searchUrl,
+        message: `No exact match; opened ${serviceLabel(service)} add search instead of auto-adding.`
+      };
+    }
+
     return addResult(
       service,
       media,
-      best,
+      exact,
       settings,
       fallbackUrl,
       checkedExistingIdentity
@@ -779,19 +909,12 @@ async function addResult(
       method: "POST",
       body: payload
     });
-    const detailUrl = CFG.buildDetailPageUrl(CFG.serviceBaseUrl(settings, service), service, added);
-
-    if (detailUrl) {
-      await createTab(detailUrl);
-    }
-
-    return {
-      ok: true,
+    return openAddedItem(
       service,
-      opened: !!detailUrl,
-      openedUrl: detailUrl,
-      message: "Added movie to Radarr without starting a search."
-    };
+      settings,
+      added,
+      "Added movie to Radarr without starting a search."
+    );
   }
 
   const payload = {
@@ -815,27 +938,59 @@ async function addResult(
     method: "POST",
     body: payload
   });
+
+  return openAddedItem(
+    service,
+    settings,
+    added,
+    "Added series to Sonarr without starting a search."
+  );
+}
+
+// The item is already added at this point, so a tab failure must not turn the
+// reply into an error (a retry would only hit the existing-item check).
+async function openAddedItem(service, settings, added, message) {
   const detailUrl = CFG.buildDetailPageUrl(CFG.serviceBaseUrl(settings, service), service, added);
 
-  if (detailUrl) {
-    await createTab(detailUrl);
+  if (!detailUrl) {
+    return { ok: true, service, opened: false, openedUrl: detailUrl, message };
   }
 
+  try {
+    await createTab(detailUrl);
+  } catch (error) {
+    return {
+      ok: true,
+      service,
+      opened: false,
+      openedUrl: "",
+      message: `${message} ${error.message}`
+    };
+  }
+
+  return { ok: true, service, opened: true, openedUrl: detailUrl, message };
+}
+
+function invalidServiceUrlResult(service) {
   return {
-    ok: true,
+    ok: false,
     service,
-    opened: !!detailUrl,
-    openedUrl: detailUrl,
-    message: "Added series to Sonarr without starting a search."
+    error: `${serviceLabel(service)} URL is invalid. Check the configured protocol, host, and port.`
   };
 }
 
-async function openResult(message) {
-  const settings = await getSettings();
+function safeErrorMessage(error, settings, service, fallback) {
+  const apiKey = settings ? CFG.serviceApiKey(settings, service) : "";
+  return redactSensitive(error?.message || fallback, apiKey) || fallback;
+}
+
+async function openResult(message, settings) {
   const service = message.service;
   const result = message.result || {};
   const media = message.media || {};
   const searchPlan = CFG.buildSearchPlan(service, media);
+  const baseUrl = CFG.serviceBaseUrl(settings, service);
+  const validBaseUrl = Boolean(CFG.normalizeBaseUrl(baseUrl, ""));
 
   if (service === "prowlarr" || service === "jackett") {
     const infoUrl = CFG.safeHttpUrl(result.infoUrl);
@@ -843,6 +998,10 @@ async function openResult(message) {
     if (infoUrl) {
       await createTab(infoUrl);
       return { ok: true, openedUrl: infoUrl };
+    }
+
+    if (!validBaseUrl) {
+      return invalidServiceUrlResult(service);
     }
 
     const term = CFG.normalizeSpace(
@@ -853,23 +1012,29 @@ async function openResult(message) {
       searchPlan.term
     );
     const url = service === "prowlarr"
-      ? CFG.buildProwlarrSearchPageUrl(
-        CFG.serviceBaseUrl(settings, service),
-        term,
-        settings.prowlarrLimit
-      )
-      : CFG.buildJackettSearchPageUrl(
-        CFG.serviceBaseUrl(settings, service),
-        term
-      );
+      ? CFG.buildProwlarrSearchPageUrl(baseUrl, term, settings.prowlarrLimit)
+      : CFG.buildJackettSearchPageUrl(baseUrl, term);
     await createTab(url);
     return { ok: true, openedUrl: url };
   }
 
-  const existing = CFG.serviceApiKey(settings, service)
-    ? await findExisting(service, settings, result)
-    : null;
-  const detailUrl = CFG.buildDetailPageUrl(CFG.serviceBaseUrl(settings, service), service, existing);
+  if (!validBaseUrl) {
+    return invalidServiceUrlResult(service);
+  }
+
+  let existing = null;
+
+  if (CFG.serviceApiKey(settings, service)) {
+    try {
+      existing = await findExisting(service, settings, result);
+    } catch (_error) {
+      // The existing-item check is only a shortcut; the add page still lets
+      // the user find the item when the service is unreachable or rejects us.
+      existing = null;
+    }
+  }
+
+  const detailUrl = CFG.buildDetailPageUrl(baseUrl, service, existing);
 
   if (detailUrl) {
     await createTab(detailUrl);
@@ -877,7 +1042,7 @@ async function openResult(message) {
   }
 
   const addUrl = CFG.buildAddPageUrl(
-    CFG.serviceBaseUrl(settings, service),
+    baseUrl,
     resultSearchTerm(service, result, searchPlan.fallbackTerm || searchPlan.term)
   );
 
@@ -987,7 +1152,18 @@ async function handleMessage(message, sender) {
       return { ok: false, error: "Invalid service" };
     }
 
-    return openResult(message);
+    let settings;
+
+    try {
+      settings = await getSettings();
+      return await openResult(message, settings);
+    } catch (error) {
+      return {
+        ok: false,
+        service: message.service,
+        error: safeErrorMessage(error, settings, message.service, "Could not open the result.")
+      };
+    }
   }
 
   if (type === "ADB_OPEN_URL" && message.url) {
@@ -995,15 +1171,24 @@ async function handleMessage(message, sender) {
       return { ok: false, error: "Invalid service" };
     }
 
-    const settings = await getSettings();
-    const safeUrl = CFG.configuredServiceUrl(settings, message.service, message.url);
+    let settings;
 
-    if (!safeUrl) {
-      return { ok: false, error: "Refused to open an untrusted URL" };
+    try {
+      settings = await getSettings();
+      const safeUrl = CFG.configuredServiceUrl(settings, message.service, message.url);
+
+      if (!safeUrl) {
+        return { ok: false, error: "Refused to open an untrusted URL" };
+      }
+
+      await createTab(safeUrl);
+      return { ok: true, openedUrl: safeUrl };
+    } catch (error) {
+      return {
+        ok: false,
+        error: safeErrorMessage(error, settings, message.service, "Could not open the URL.")
+      };
     }
-
-    await createTab(safeUrl);
-    return { ok: true, openedUrl: safeUrl };
   }
 
   if (type === "ADB_TEST_CONNECTION") {
@@ -1034,18 +1219,23 @@ if (runtimeApi?.onInstalled) {
   });
 }
 
+// Last-resort guard: every message gets a response object, never a rejection.
+function unexpectedErrorResponse(error) {
+  return {
+    ok: false,
+    error: redactSensitive(error?.message) || "Unexpected extension error"
+  };
+}
+
 if (usingPromiseBrowserApi()) {
-  runtimeApi.onMessage.addListener((message, sender) => handleMessage(message, sender));
+  runtimeApi.onMessage.addListener((message, sender) =>
+    handleMessage(message, sender).catch(unexpectedErrorResponse)
+  );
 } else {
   runtimeApi.onMessage.addListener((message, sender, sendResponse) => {
     handleMessage(message, sender)
-      .then(sendResponse)
-      .catch((error) => {
-        sendResponse({
-          ok: false,
-          error: error.message || "Unexpected extension error"
-        });
-      });
+      .catch(unexpectedErrorResponse)
+      .then(sendResponse);
 
     return true;
   });
