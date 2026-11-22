@@ -34,6 +34,8 @@
   ].join(", ");
   const MAX_RENDER_ATTEMPTS = 20;
   const RENDER_DEBOUNCE_MS = 150;
+  // Settings that change which buttons the shell shows.
+  const RENDER_SETTING_KEYS = ["showProwlarrButton", "showJackettButton"];
 
   function sendMessage(message) {
     if (globalThis.browser?.runtime?.sendMessage) {
@@ -59,8 +61,54 @@
       return globalThis.browser.storage.local.get(defaults);
     }
 
-    return new Promise((resolve) => {
-      extensionApi.storage.local.get(defaults, resolve);
+    // Chrome reports a failed read only through runtime.lastError; resolving
+    // anyway would render buttons from settings that were never read.
+    return new Promise((resolve, reject) => {
+      extensionApi.storage.local.get(defaults, (values) => {
+        const error = extensionApi.runtime?.lastError;
+
+        if (error) {
+          reject(new Error(error.message || "Settings could not be read"));
+          return;
+        }
+
+        resolve(values);
+      });
+    });
+  }
+
+  // Bumped whenever a setting that shapes the button row changes, so a shell
+  // built from older settings is recognised as stale and rebuilt.
+  let settingsVersion = 0;
+
+  function onRenderSettingsChange(callback) {
+    const onChanged = extensionApi?.storage?.onChanged;
+
+    if (typeof onChanged?.addListener !== "function") {
+      return;
+    }
+
+    onChanged.addListener((changes, areaName) => {
+      if (areaName !== "local" || !changes) {
+        return;
+      }
+
+      // Firefox reports every key passed to set(), changed or not; compare the
+      // normalized values so a plain "Save settings" does not rebuild.
+      const changed = RENDER_SETTING_KEYS.some((key) => {
+        if (!Object.prototype.hasOwnProperty.call(changes, key)) {
+          return false;
+        }
+
+        const before = CFG.mergeSettings({ [key]: changes[key]?.oldValue })[key];
+        const after = CFG.mergeSettings({ [key]: changes[key]?.newValue })[key];
+        return before !== after;
+      });
+
+      if (changed) {
+        settingsVersion += 1;
+        callback();
+      }
     });
   }
 
@@ -683,8 +731,14 @@
 
     const currentUrl = window.location.href;
     const existingShell = document.getElementById(ROOT_ID);
+    // Captured before the settings read: a change that lands while the read
+    // is in flight leaves this shell marked stale for the next pass.
+    const renderVersion = String(settingsVersion);
 
-    if (existingShell?.dataset.sourceUrl === currentUrl) {
+    if (
+      existingShell?.dataset.sourceUrl === currentUrl &&
+      existingShell.dataset.settingsVersion === renderVersion
+    ) {
       return true;
     }
 
@@ -706,6 +760,7 @@
     shell.className = "adb-arr-shell";
     shell.dataset.mediaType = media.mediaType;
     shell.dataset.sourceUrl = currentUrl;
+    shell.dataset.settingsVersion = renderVersion;
     buttonRow.className = "adb-arr-button-row";
     status.className = "adb-arr-status adb-arr-status-neutral";
 
@@ -776,7 +831,19 @@
         .then((done) => {
           // Only a shell that is really in the document earns a fresh retry
           // budget when the site later removes it.
-          mounted = Boolean(done) && Boolean(document.getElementById(ROOT_ID));
+          const shell = document.getElementById(ROOT_ID);
+          mounted = Boolean(done) && Boolean(shell);
+
+          // A button setting changed while this pass was reading storage, so
+          // the shell it mounted may show the old buttons. Rebuild it.
+          if (
+            mounted &&
+            shell.dataset.settingsVersion !== String(settingsVersion) &&
+            attempts < MAX_RENDER_ATTEMPTS
+          ) {
+            scheduleRender(0);
+            return;
+          }
 
           if (done || attempts >= MAX_RENDER_ATTEMPTS) {
             stop();
@@ -786,6 +853,10 @@
           scheduleRender(attempts < 6 ? 500 : 1500);
         })
         .catch(() => {
+          // A failed settings read mounted nothing; it must not earn the
+          // fresh budget reserved for a shell the site removed.
+          mounted = false;
+
           if (attempts < MAX_RENDER_ATTEMPTS) {
             scheduleRender(1500);
           }
@@ -832,6 +903,20 @@
       });
       observer.observe(document.documentElement, { childList: true, subtree: true });
     }
+
+    // An open detail page follows button toggles from the options page. Only
+    // a mounted shell or a render in flight needs another pass; otherwise the
+    // next regular render reads the new settings anyway, and pages that never
+    // mount keep their spent retry budget.
+    onRenderSettingsChange(() => {
+      if (CFG.isBlockedPagePath(window.location.pathname)) {
+        return;
+      }
+
+      if (rendering || document.getElementById(ROOT_ID)) {
+        scheduleRender(0);
+      }
+    });
 
     for (const eventName of ["pageshow", "popstate", "hashchange"]) {
       window.addEventListener(eventName, () => {
